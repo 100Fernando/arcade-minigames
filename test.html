@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Teste script.js</title>
+    <style>
+        body { background: #0f0f23; color: white; margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        h1 { margin-top: 0; }
+        .status { margin: 10px 0; }
+        .error { color: #ff6b6b; font-weight: bold; }
+        .success { color: #6bff8f; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Teste script.js</h1>
+    <div id="status"></div>
+    <script>
+        function updateStatus(msg, isError) {
+            const el = document.getElementById('status');
+            el.textContent = msg;
+            el.className = isError ? 'error' : 'success';
+            console.log(msg);
+        }
+        updateStatus('Script.js carregado!', false);
+        console.log('document.readyState:', document.readyState);
+    </script>
+    <script src="script.js"></script>
+</body>
+</html>

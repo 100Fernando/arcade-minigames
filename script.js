@@ -142,8 +142,8 @@ for (let i = 0; i < 50; i++) {
                 this.height = 20;
                 this.x = canvas.width / 2 - this.width / 2;
                 this.y = canvas.height - 40;
-                this.speed = 5;
-                this.baseSpeed = 5; // Velocidade base para reset
+                this.baseSpeed = 250; // pixels per second
+                this.speed = this.baseSpeed; // current speed in pixels per second
                 this.speedMultiplier = 1; // Multiplicador de speed
                 this.bullets = [];
                 this.canShoot = true;
@@ -154,43 +154,45 @@ for (let i = 0; i < 50; i++) {
                 this.rapidfireFlashTimer = 0; // For rapid fire visual effect
             }
 
-            move(direction) {
+            move(direction, deltaTime) {
+                // Convert deltaTime from milliseconds to seconds
+                const deltaTimeSec = deltaTime / 1000;
                 if (direction === 'left' && this.x > 0) {
-                    this.x -= this.speed;
+                    this.x -= this.speed * deltaTimeSec;
                 } else if (direction === 'right' && this.x < this.canvas.width - this.width) {
-                    this.x += this.speed;
+                    this.x += this.speed * deltaTimeSec;
                 }
             }
 
             shoot() {
-                if (this.shootCooldown <= 0 && this.canShoot) {
-                    // Check for multi-shot power-up
-                    const shotCount = this.game && this.game.activePowerUps && this.game.activePowerUps.multishot ?
-                        (Math.random() > 0.5 ? 3 : 2) : 1;
+        // Check for multi-shot power-up
+        const shotCount = this.game && this.game.activePowerUps && this.game.activePowerUps.multishot ?
+            (Math.random() > 0.5 ? 3 : 2) : 1;
 
-                    // Check for rapidfire power-up to reduce cooldown
-                    const cooldown = this.game && this.game.activePowerUps && this.game.activePowerUps.rapidfire ?
-                        Math.floor(this.maxCooldown / 2) : this.maxCooldown;
+        // Check for rapidfire power-up to reduce cooldown
+        const cooldownFrames = this.game && this.game.activePowerUps && this.game.activePowerUps.rapidfire ?
+            Math.floor(this.maxCooldown / 2) : this.maxCooldown;
+        // Convert frames to milliseconds (assuming 60 FPS)
+        const cooldownMs = cooldownFrames * (1000 / 60);
 
-                    if (shotCount === 1) {
-                        this.bullets.push(new Bullet(this.x, this.y, 'player'));
-                    } else if (shotCount === 2) {
-                        this.bullets.push(new Bullet(this.x - 8, this.y, 'player', 4, 10, '#ff8800'));
-                        this.bullets.push(new Bullet(this.x + 8, this.y, 'player', 4, 10, '#ff8800'));
-                    } else {
-                        this.bullets.push(new Bullet(this.x - 12, this.y, 'player', 4, 10, '#ff8800'));
-                        this.bullets.push(new Bullet(this.x, this.y, 'player', 4, 10, '#ff8800'));
-                        this.bullets.push(new Bullet(this.x + 12, this.y, 'player', 4, 10, '#ff8800'));
-                    }
+        if (shotCount === 1) {
+            this.bullets.push(new Bullet(this.x, this.y, 'player'));
+        } else if (shotCount === 2) {
+            this.bullets.push(new Bullet(this.x - 8, this.y, 'player', 4, 10, '#ff8800'));
+            this.bullets.push(new Bullet(this.x + 8, this.y, 'player', 4, 10, '#ff8800'));
+        } else {
+            this.bullets.push(new Bullet(this.x - 12, this.y, 'player', 4, 10, '#ff8800'));
+            this.bullets.push(new Bullet(this.x, this.y, 'player', 4, 10, '#ff8800'));
+            this.bullets.push(new Bullet(this.x + 12, this.y, 'player', 4, 10, '#ff8800'));
+        }
 
-                    this.shootCooldown = cooldown;
-                    this.canShoot = false;
-                }
-            }
+        this.shootCooldown = cooldownMs;
+        this.canShoot = false;
+    }
 
-            update() {
+            update(deltaTime) {
                 if (this.shootCooldown > 0) {
-                    this.shootCooldown--;
+                    this.shootCooldown -= deltaTime;
                 } else {
                     this.canShoot = true;
                 }
@@ -322,9 +324,12 @@ for (let i = 0; i < 50; i++) {
                 ctx.fillRect(centerX + 2, centerY - 8, 3, 3);
             }
 
-            update() {
-                this.shootCooldown--;
-                if (this.shootCooldown <= 0) {
+            update(deltaTime) {
+                // Convert deltaTime from milliseconds to seconds for cooldown
+                const deltaTimeSec = deltaTime / 1000;
+                if (this.shootCooldown > 0) {
+                    this.shootCooldown -= deltaTime * 1000; // Keep in milliseconds for consistency with maxCooldown
+                } else {
                     this.shootCooldown = this.maxCooldown;
                     this.bullets.push(new Bullet(this.x, this.y, 'enemy', this.width, this.height));
                 }
@@ -338,17 +343,22 @@ for (let i = 0; i < 50; i++) {
                 this.owner = owner;
                 this.width = width;
                 this.height = height;
-                this.speed = owner === 'player' ? -8 : 6;
+                this.speed = owner === 'player' ? -300 : 200; // pixels per second
                 this.active = true;
                 this.color = color;
             }
 
-            update() {
-                this.y += this.speed;
-                if (this.y < 0 || this.y > 600) {
-                    this.active = false;
-                }
-            }
+            update(deltaTime) {
+    // Clamp deltaTime to prevent large spikes (e.g., from tab switching)
+    const clampedDeltaTime = Math.min(deltaTime, 100);
+    // Convert deltaTime from milliseconds to seconds for movement
+    const deltaTimeSec = clampedDeltaTime / 1000;
+    // Speed is in pixels per second per second
+    this.y += this.speed * deltaTimeSec;
+    if (this.y < 0 || this.y > this.canvasHeight) {
+        this.active = false;
+    }
+}
 
             draw(ctx) {
                 if (this.color) {
@@ -560,6 +570,13 @@ for (let i = 0; i < 50; i++) {
                 // Level up feedback
                 this.levelUpTimer = 0;
                 this.levelUpText = '';
+                // Key state tracking for continuous movement
+                this.keys = {
+                    ArrowLeft: false,
+                    ArrowRight: false,
+                    KeyA: false,
+                    KeyD: false
+                };
                 this.setupInput();
                 this.initLevel();
             }
@@ -569,15 +586,30 @@ for (let i = 0; i < 50; i++) {
                     if (this.gameOver || this.paused) return;
                     if (e.key === 'ArrowLeft' || e.key === 'a') {
                         e.preventDefault();
-                        this.player.move('left');
+                        this.keys.ArrowLeft = true;
+                        this.keys.KeyA = true;
                     } else if (e.key === 'ArrowRight' || e.key === 'd') {
                         e.preventDefault();
-                        this.player.move('right');
+                        this.keys.ArrowRight = true;
+                        this.keys.KeyD = true;
                     } else if (e.key === ' ') {
                         e.preventDefault();
                         this.player.shoot();
                     } else if (e.key.toLowerCase() === 'r') {
                         this.restart();
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    if (this.gameOver || this.paused) return;
+                    if (e.key === 'ArrowLeft' || e.key === 'a') {
+                        e.preventDefault();
+                        this.keys.ArrowLeft = false;
+                        this.keys.KeyA = false;
+                    } else if (e.key === 'ArrowRight' || e.key === 'd') {
+                        e.preventDefault();
+                        this.keys.ArrowRight = false;
+                        this.keys.KeyD = false;
                     }
                 });
             }
@@ -616,15 +648,22 @@ for (let i = 0; i < 50; i++) {
                     this.enemyMoveTimer = 0;
                 }
                 this.player.update();
-                this.enemies.forEach(enemy => enemy.update());
-                this.enemyBullets.forEach(bullet => bullet.update());
-                this.particles.forEach(particle => particle.update());
+                // Handle continuous movement based on key state
+                if (this.keys.ArrowLeft || this.keys.KeyA) {
+                    this.player.move('left', deltaTime);
+                }
+                if (this.keys.ArrowRight || this.keys.KeyD) {
+                    this.player.move('right', deltaTime);
+                }
+                this.enemies.forEach(enemy => enemy.update(deltaTime));
+                this.enemyBullets.forEach(bullet => bullet.update(deltaTime));
+                this.particles.forEach(particle => particle.update(deltaTime));
                 this.particles = this.particles.filter(p => p.life > 0);
                 // Atualizar power-ups na tela
                 this.powerUps.forEach(p => p.update(deltaTime));
                 this.powerUps = this.powerUps.filter(p => p.active);
                 this.enemyBullets = this.enemyBullets.filter(b => b.active);
-                this.player.bullets.forEach(bullet => bullet.update());
+                this.player.bullets.forEach(bullet => bullet.update(deltaTime));
                 this.player.bullets = this.player.bullets.filter(b => b.active);
 
                 // Atualizar timers dos power-ups temporários
@@ -655,35 +694,37 @@ for (let i = 0; i < 50; i++) {
             }
 
             moveEnemies() {
-                let hitEdge = false;
-                for (const enemy of this.enemies) {
-                    if (enemy.x <= 0 || enemy.x + enemy.width >= this.width) {
-                        hitEdge = true;
-                        break;
-                    }
-                }
-                if (hitEdge) {
-                    this.enemyMoveDirection *= -1;
-                    this.enemies.forEach(enemy => {
-                        enemy.y += 25;
-                        enemy.x += this.enemyMoveDirection * 10;
-                    });
-                } else {
-                    this.enemies.forEach(enemy => {
-                        enemy.x += this.enemyMoveDirection * enemy.speed * 4;
-                    });
-                }
-                for (const enemy of this.enemies) {
-                    if (enemy.y + enemy.height >= this.player.y) {
-                        this.gameOver = true;
-                    }
-                }
-                if (this.enemiesToSpawn === 0 && this.enemies.length === 0) {
-                    this.level++;
-                    this.enemyRows++;
-                    this.initLevel();
-                }
-            }
+    // This method is called at intervals controlled by enemyMoveTimer (which uses deltaTime)
+    // So the movement is already time-based via the calling interval
+    let hitEdge = false;
+    for (const enemy of this.enemies) {
+        if (enemy.x <= 0 || enemy.x + enemy.width >= this.width) {
+            hitEdge = true;
+            break;
+        }
+    }
+    if (hitEdge) {
+        this.enemyMoveDirection *= -1;
+        this.enemies.forEach(enemy => {
+            enemy.y += 25;
+            enemy.x += this.enemyMoveDirection * 10;
+        });
+    } else {
+        this.enemies.forEach(enemy => {
+            enemy.x += this.enemyMoveDirection * enemy.speed * 4;
+        });
+    }
+    for (const enemy of this.enemies) {
+        if (enemy.y + enemy.height >= this.player.y) {
+            this.gameOver = true;
+        }
+    }
+    if (this.enemiesToSpawn === 0 && this.enemies.length === 0) {
+        this.level++;
+        this.enemyRows++;
+        this.initLevel();
+    }
+}
 
             checkCollisions() {
                 for (const bullet of this.player.bullets) {

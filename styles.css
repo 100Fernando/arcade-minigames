@@ -193,7 +193,7 @@ body {
     padding-top: 40px;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
     overflow: hidden;
-    transition: max-height 0.3s ease;
+    transition: max-height 0.45s cubic-bezier(0.16, 1, 0.3, 1), padding 0.45s cubic-bezier(0.16, 1, 0.3, 1), margin 0.45s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease, box-shadow 0.3s ease;
 }
 
 .game-title {
@@ -327,10 +327,79 @@ body {
     transform: translateY(0);
 }
 
+/* ============================================
+   MINIMIZED: only the icon is visible
+   ============================================ */
 .game-section.minimized {
-    max-height: 80px;
+    position: relative;
+    box-sizing: border-box;
+    max-height: 150px;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    margin-top: 26px;
+    margin-bottom: 26px;
+    border-top: none;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.045);
+    box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     overflow: hidden;
-    transition: max-height 0.3s ease;
+    text-align: center;
+}
+
+/* While minimized, only the header (icon + title) stays visible. */
+.game-section.minimized > *:not(.game-header) {
+    display: none;
+}
+
+.game-section.minimized .game-header {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.game-section.minimized .game-icon {
+    font-size: 60px;
+    cursor: pointer;
+}
+
+.game-section.minimized .game-title,
+.game-section.minimized .game-header h2 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    opacity: 0.75;
+    margin-bottom: 0;
+}
+
+.game-section.minimized .game-icon:hover {
+    transform: scale(1.25) rotate(8deg);
+}
+
+/* The icon already owns a "bounce" transform animation, so the hover
+   affordance is applied to the header instead (it has no animation). */
+.game-section.minimized .game-header:hover {
+    transform: scale(1.08);
+}
+
+.game-section.minimized:hover {
+    background: rgba(255, 255, 255, 0.09);
+    box-shadow: 0 16px 34px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.game-section.minimized::after {
+    content: '▸ clique to open';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 4px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: rgba(255, 255, 255, 0.4);
+    pointer-events: none;
 }
 
 @media (max-width: 768px) {
@@ -574,4 +643,27 @@ body {
 @keyframes twinkle {
     0%, 100% { opacity: 0.2; }
     50% { opacity: 1; }
+}
+
+/* ============================================
+   MINIMIZED TILES ON SMALL SCREENS
+   ============================================ */
+@media (max-width: 768px) {
+    .game-section.minimized {
+        max-height: 132px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        margin-top: 18px;
+        margin-bottom: 18px;
+    }
+    .game-section.minimized .game-icon {
+        font-size: 46px;
+    }
+    .game-section.minimized .game-title,
+    .game-section.minimized .game-header h2 {
+        font-size: 14px;
+    }
+    .game-section.minimized::after {
+        font-size: 10px;
+    }
 }

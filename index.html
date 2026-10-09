@@ -20,14 +20,6 @@
             </label>
             <button id="confirmNameBtn" type="button">Confirmar & play</button>
         </div>
-        <div class="game-section minimized" id="targetGameSection">
-            <div class="game-header"><div class="game-icon" id="targetGameIcon" title="Clique para abrir o jogo">🎯</div><h2 class="game-title">🎯 Jogo de Alvos</h2></div>
-            <div class="game-stats"><span>Score: <span class="score" id="score">0</span></span><span>Recorde: <span class="highscore" id="highscore">0</span></span></div>
-            <div class="game-board" id="gameBoard" style="height: 600px; background: #1a1a2e; border-radius: 10px; overflow: hidden;">
-                <div id="targetGameCanvasContainer"></div><canvas id="targetCanvas" width="500" height="600" style="display: block;"></canvas>
-            </div>
-            <button class="restart-btn" id="restartBtn" type="button">Reiniciar Jogo</button>
-        </div>
         <div class="game-section minimized" id="siGameSection">
             <div class="game-header"><div class="game-icon" id="spaceInvadersIcon" title="Clique para abrir o jogo">👾</div><h2 class="game-title">👾 Space Invaders</h2></div>
             <div class="si-game-container" id="siGameContainer">
@@ -45,6 +37,14 @@
                     </div>
                 </div>
             </div>
+        </div>
+        <div class="game-section minimized" id="targetGameSection">
+            <div class="game-header"><div class="game-icon" id="targetGameIcon" title="Clique para abrir o jogo">🎯</div><h2 class="game-title">🎯 Jogo de Alvos</h2></div>
+            <div class="game-stats"><span>Score: <span class="score" id="score">0</span></span><span>Recorde: <span class="highscore" id="highscore">0</span></span></div>
+            <div class="game-board" id="gameBoard" style="height: 600px; background: #1a1a2e; border-radius: 10px; overflow: hidden;">
+                <div id="targetGameCanvasContainer"></div><canvas id="targetCanvas" width="500" height="600" style="display: block;"></canvas>
+            </div>
+            <button class="restart-btn" id="restartBtn" type="button">Reiniciar Jogo</button>
         </div>
     </div>
     <script src="script.js"></script>

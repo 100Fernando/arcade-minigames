@@ -226,6 +226,8 @@ body {
 
 .game-board {
     width: 100%;
+    max-width: 500px;
+    margin: 0 auto;
     height: 300px;
     background: rgba(0, 0, 0, 0.2);
     border-radius: 16px;
@@ -511,14 +513,14 @@ body {
     z-index: 1;
 }
 
-#siCanvas .overlay {
+/* The overlay is a sibling of the canvas inside .si-game-canvas-wrapper (position:
+   relative), so anchor it to that wrapper with inset:0. The old `#siCanvas .overlay`
+   selector never matched (a canvas can't have rendered children), leaving the overlay
+   as a static flex item that spilled horizontally out of the section. */
+#siOverlay {
     position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     z-index: 10;
-    pointer-events: none;
     background: rgba(0, 0, 0, 0);
     display: flex;
     align-items: center;
@@ -778,6 +780,19 @@ body {
    is hidden, leaving only the name prompt visible. */
 .card.gate-pending .game-section { display: none; }
 .card.gate-pending .name-gate { display: flex; }
+
+/* When a game is open, collapse the top chrome (greeting, icon, divider,
+   subtitle, name gate) and let the card grow instead of scrolling internally.
+   The page (body) scrolls instead, so the HUD stays attached right above
+   the canvas and is never lost above the fold. The card's own minimizeBtn
+   (.card.minimized, max-height:120px) still wins, so collapsing the whole
+   card keeps working. */
+.card.game-open .greeting { font-size: 30px; }
+.card.game-open .icon,
+.card.game-open .subtitle,
+.card.game-open .divider,
+.card.game-open .name-gate { display: none; }
+.card.game-open { max-height: none; overflow: visible; }
 
 /* ============================================
    MINIMIZED TILES ON SMALL SCREENS

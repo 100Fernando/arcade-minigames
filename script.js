@@ -476,6 +476,7 @@
       if(stamp===handled)return;handled=stamp;
       const wasCollapsed=area.classList.contains('minimized');
       area.classList.toggle('minimized');
+      if(card){const anyOpen=!$('targetGameSection').classList.contains('minimized')||!$('siGameSection').classList.contains('minimized');card.classList.toggle('game-open',anyOpen);}
       if(!hook)return;
       if(wasCollapsed)hook.open();else hook.close();
     };

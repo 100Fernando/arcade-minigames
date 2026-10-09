@@ -64,22 +64,39 @@
     const multFor=c=>Math.min(5,1+Math.floor(c/4));
     const values={'🎯':100,'⭐':150,'💎':200,'🔥':250,'⚡':300};
     const pool=['🎯','🎯','⭐','⭐','💎','🔥','⚡'];
+    // Boss + powerups: bosses at waves 4/8/12; powerups drop from hit targets.
+    const bossWaves=[4,8,12];
+    const isBossWave=w=>bossWaves.indexOf(w)>=0;
+    const bossHpFor=w=>Math.round(6+w); // 10/14/18 hits
+    const powerTypes=['life','shield','slow','x2'];
+    const powerProb=0.12;
+    const powerEmoji={life:'❤',shield:'🛡️',slow:'⏳',x2:'✨'};
     // HUD created by script: Lives, Fase, Combo (Score/Recorde already in HTML).
     const hud=document.createElement('div');
     hud.style.cssText='display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:10px 0;color:white;font:13px sans-serif';
-    hud.innerHTML='<span>Lives: <b id="tgLives">❤❤❤</b></span><span>Fase: <b id="tgWave">1</b></span><span>Combo: <b id="tgCombo">x1</b></span>';
+    hud.innerHTML='<span>Lives: <b id="tgLives">❤❤❤</b></span><span>Fase: <b id="tgWave">1</b></span><span>Combo: <b id="tgCombo">x1</b></span><span id="tgEffects"></span>';
     sec.insertBefore(hud,board);
-    const livesEl=$('tgLives'), waveEl=$('tgWave'), comboEl=$('tgCombo');
+    const livesEl=$('tgLives'), waveEl=$('tgWave'), comboEl=$('tgCombo'), effectsEl=$('tgEffects');
     const over=document.createElement('div'); over.className='tg-overlay';
     board.appendChild(over);
+    const bossBar=document.createElement('div'); bossBar.className='boss-bar';
+    bossBar.innerHTML='<div class="boss-name"></div><div class="boss-track"><div class="boss-fill"></div></div>';
+    bossBar.style.display='none';
+    board.appendChild(bossBar);
     function updateHUD(){ if(!tg)return;
       score.textContent=tg.points; best.textContent=record;
       livesEl.textContent='❤'.repeat(Math.max(0,tg.lives));
       waveEl.textContent=tg.wave; comboEl.textContent='x'+multFor(tg.combo);
+      const fx=(tg.shield?'🛡️ ':'')+(tg.slowMs>0?'⏳ ':'')+(tg.x2Ms>0?'✨ ':'');
+      effectsEl.textContent=fx;
+      if(tg.boss){const b=tg.boss;const bar=board.querySelector('.boss-bar');
+        if(bar){bar.style.display='block';bar.querySelector('.boss-name').textContent=b.name+' · '+b.hp+'/'+b.maxHp;
+          bar.querySelector('.boss-fill').style.width=clamp(100*b.hp/b.maxHp,0,100)+'%';}}
+      else {const bar=board.querySelector('.boss-bar');if(bar)bar.style.display='none';}
     }
-    function clearChains(){ if(!tg)return; clearTimeout(tg.spawnTimeout); clearTimeout(tg.moveTimeout); tg.spawnTimeout=tg.moveTimeout=null; }
-    function clearTargets(){ board.querySelectorAll('.target').forEach(t=>t.remove()); }
-    function loseLife(){ if(!tg||tg.over)return; tg.lives--; tg.combo=0; updateHUD(); if(tg.lives<=0)gameOver(); }
+    function clearChains(){ if(!tg)return; clearTimeout(tg.spawnTimeout); clearTimeout(tg.moveTimeout); clearTimeout(tg.bossTimeout); tg.spawnTimeout=tg.moveTimeout=tg.bossTimeout=null; }
+    function clearTargets(){ board.querySelectorAll('.target').forEach(t=>t.remove()); board.querySelectorAll('.powerup').forEach(t=>t.remove()); }
+    function loseLife(){ if(!tg||tg.over)return; if(tg.shield){tg.shield=false; sfx('shield'); updateHUD(); return;} tg.lives--; tg.combo=0; updateHUD(); if(tg.lives<=0)gameOver(); }
     function gameOver(){ if(!tg)return; tg.over=true; clearChains(); clearTargets();
       over.innerHTML='<div><h2 style="color:#ff5566">Fim de jogo</h2><p>Score: '+tg.points+' · Recorde: '+record+'</p><p>Precizi: '+Math.round(100*tg.hits/Math.max(1,tg.clicks))+'% · Fasa: '+tg.wave+'</p></div>';
       over.style.display='flex'; sfx('gameover');
@@ -98,12 +115,69 @@
         t.dataset.x=String(x); t.dataset.y=String(y); t.dataset.vx=String(vx); t.dataset.vy=String(vy);
         t.style.left=x+'px'; t.style.top=y+'px';
       }
+      if(tg.slowMs>0)tg.slowMs=Math.max(0,tg.slowMs-50);
+      if(tg.x2Ms>0)tg.x2Ms=Math.max(0,tg.x2Ms-50);
+      board.querySelectorAll('.powerup').forEach(p=>{ if(!p.dataset.exp)p.dataset.exp=String(Number(p.dataset.exp||0)+50); if(Number(p.dataset.exp)>6000)p.remove(); });
       tg.moveTimeout=setTimeout(tickMove,50);
     }
-    function scheduleNext(){ if(tg&&!tg.over)tg.spawnTimeout=setTimeout(spawnTarget,spawnEvery(tg.wave)); }
+    function scheduleNext(){ if(tg&&!tg.over)tg.spawnTimeout=setTimeout(spawnTarget,spawnEvery(tg.wave)*(tg.slowMs>0?1.6:1)); }
+    function spawnBoss(w){
+      const names=['Sentinela Alfa','Matriarca Beta','Nucleo Omega'];
+      const name=names[bossWaves.indexOf(w)];
+      const hp=bossHpFor(w);
+      const size=Math.min(110,Math.max(60,board.clientWidth*.22));
+      const x=rnd(0,Math.max(0,board.clientWidth-size)), y=rnd(0,Math.max(0,board.clientHeight-size));
+      const t=document.createElement('div'); t.className='target target-boss';
+      t.textContent='👑';
+      t.style.width=t.style.height=size+'px'; t.style.fontSize=Math.round(size*.5)+'px';
+      t.style.left=x+'px'; t.style.top=y+'px';
+      t.dataset.kind='boss'; t.dataset.hp=String(hp);
+      board.appendChild(t);
+      tg.boss={name,hp,maxHp:hp}; tg.bossSpawned=true; tg.bossAttackMs=0;
+      updateHUD();
+      t.addEventListener('pointerdown',()=>{
+        if(!t.isConnected||Number(t.dataset.hp)<=0)return;
+        tg.clicks++; tg.hits++; tg.combo++;
+        const left=Number(t.dataset.hp)-1;
+        t.dataset.hp=String(left);
+        if(tg.boss)tg.boss.hp=left;
+        tg.points+=50*multFor(tg.combo)*(tg.x2Ms>0?2:1);
+        if(left<=0){
+          tg.boss=null; tg.points+=250*w;
+          t.classList.add('target-correct'); sfx('boss');
+          setTimeout(()=>t.remove(),300);
+        } else { t.classList.add('target-hit'); sfx('hit'); }
+        updateHUD();
+      });
+      // Boss not clicked in time: it relocates, no life lost, but keeps attacking.
+      setTimeout(()=>{ if(!t.isConnected||Number(t.dataset.hp)<=0)return;
+        const nx=rnd(0,Math.max(0,board.clientWidth-size)), ny=rnd(0,Math.max(0,board.clientHeight-size));
+        t.style.left=nx+'px'; t.style.top=ny+'px';
+      },lifeFor(w)*2);
+    }
+    function dropPowerup(src){
+      const type=powerTypes[Math.floor(rnd(0,powerTypes.length))];
+      const p=document.createElement('div'); p.className='powerup';
+      p.textContent=powerEmoji[type];
+      const x=Number(src.dataset.x||0), y=Number(src.dataset.y||0);
+      p.style.left=x+'px'; p.style.top=y+'px';
+      p.style.width=p.style.height='30px'; p.style.fontSize='20px';
+      p.dataset.type=type;
+      board.appendChild(p);
+      p.addEventListener('pointerdown',()=>{
+        if(!p.isConnected||!tg||tg.over)return;
+        if(type==='life')tg.lives=Math.min(5,tg.lives+1);
+        else if(type==='shield')tg.shield=true;
+        else if(type==='slow')tg.slowMs=8000;
+        else tg.x2Ms=8000;
+        sfx('power'); p.remove(); updateHUD();
+      });
+    }
     function spawnTarget(){
       if(!tg||tg.over||!board.isConnected)return;
-      const w=tg.wave, size=sizeFor(w), bomb=Math.random()<decoyProb(w);
+      const w=tg.wave;
+      if(isBossWave(w)&&!tg.bossSpawned){ spawnBoss(w); scheduleNext(); return; }
+      const size=sizeFor(w), bomb=Math.random()<decoyProb(w);
       const t=document.createElement('div'); t.className=bomb?'target target-bomb':'target';
       const emoji=bomb?'💣':pool[Math.floor(rnd(0,Math.min(7,2+w)))];
       t.textContent=emoji;
@@ -125,13 +199,14 @@
           setTimeout(()=>t.remove(),250); loseLife();
         } else {
           tg.hits++; tg.combo++;
-          tg.points+=Number(t.dataset.value)*multFor(tg.combo);
+          tg.points+=Number(t.dataset.value)*multFor(tg.combo)*(tg.x2Ms>0?2:1);
           if(tg.points>record){record=tg.points;
             try{localStorage.setItem('targetGameHighscore',String(record));}catch(_){}}
           t.classList.add('target-correct'); sfx('hit');
           setTimeout(()=>t.remove(),150);
+          if(Math.random()<powerProb) dropPowerup(t);
           const nw=waveFor(tg.hits);
-          if(nw>tg.wave){tg.wave=nw;sfx('wave');}
+          if(nw>tg.wave){tg.wave=nw;tg.bossSpawned=false;sfx('wave');}
           updateHUD();
         }
       });
@@ -145,7 +220,7 @@
     }
     function newGame(){
       clearChains(); clearTargets(); over.style.display='none';
-      tg={points:0,lives:3,wave:1,combo:0,hits:0,clicks:0,over:false,spawnTimeout:null,moveTimeout:null};
+      tg={points:0,lives:3,wave:1,combo:0,hits:0,clicks:0,over:false,spawnTimeout:null,moveTimeout:null,bossTimeout:null,boss:null,bossSpawned:false,shield:false,slowMs:0,x2Ms:0,bossAttackMs:0};
       updateHUD(); spawnTarget(); tg.moveTimeout=setTimeout(tickMove,50);
     }
     restart.addEventListener('click',newGame);
@@ -450,7 +525,7 @@
     if(e.key==='ArrowRight'||e.key.toLowerCase()==='d')keys.right=true;
     if(e.key==='ArrowUp'||e.key.toLowerCase()==='w')keys.up=true;
     if(e.key==='ArrowDown'||e.key.toLowerCase()==='s')keys.down=true;
-    if(e.key===' '){keys.shoot=true;shoot();}
+    if(e.key===' ')keys.shoot=true;shoot();
     if(e.key.toLowerCase()==='r')start();
   });
   document.addEventListener('keyup',e=>{

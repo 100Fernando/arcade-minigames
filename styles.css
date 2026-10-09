@@ -311,6 +311,67 @@ body {
     border: 2px dashed #ff5566;
 }
 
+.target-boss {
+    background: radial-gradient(circle, #6a2a8a, #2a0e3e);
+    border: 3px solid #ffcc00;
+    box-shadow: 0 0 24px rgba(255, 204, 0, 0.5);
+}
+
+.target-hit {
+    animation: targetShake 0.25s ease;
+    filter: brightness(1.6);
+}
+
+.powerup {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(20, 20, 50, 0.75);
+    border: 1px solid #667eea;
+    box-shadow: 0 0 12px rgba(102, 126, 234, 0.6);
+    cursor: pointer;
+    animation: powerupPulse 1.2s ease-in-out infinite;
+    z-index: 15;
+}
+
+@keyframes powerupPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); }
+}
+
+.boss-bar {
+    position: absolute;
+    left: 0; right: 0; top: 8px;
+    display: none;
+    text-align: center;
+    color: #fff;
+    font: 13px sans-serif;
+    pointer-events: none;
+    z-index: 16;
+}
+
+.boss-name {
+    font-weight: bold;
+    text-shadow: 0 0 6px rgba(255, 85, 102, 0.8);
+}
+
+.boss-track {
+    height: 10px;
+    border-radius: 5px;
+    background: rgba(10, 10, 30, 0.8);
+    border: 1px solid #667eea;
+    overflow: hidden;
+    margin: 4px auto 0;
+}
+
+.boss-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #ff5566, #ffcc00);
+    transition: width 0.2s ease;
+}
+
 .target-wrong {
     animation: targetShake 0.25s ease;
 }

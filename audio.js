@@ -82,7 +82,10 @@
     decoy: () => tone(200, .18, {end: 60, wave: 'sawtooth', gain: .10}),
     miss: () => tone(320, .20, {end: 90, wave: 'sawtooth', gain: .09}),
     wave: () => [520, 660, 780].forEach((n, i) => tone(n, .12, {delay: i * .08, wave: 'sine', gain: .06})),
-    gameover: () => effects.gameover()
+    gameover: () => effects.gameover(),
+    shield: () => tone(660, .14, {end: 990, wave: 'sine', gain: .07}),
+    power: () => [660, 880].forEach((n, i) => tone(n, .09, {delay: i * .07, wave: 'triangle', gain: .06})),
+    boss: () => [220, 180, 140].forEach((n, i) => tone(n, .22, {delay: i * .18, wave: 'triangle', gain: .09}))
   };
 
   // Controles de audio integrados a area do jogo.

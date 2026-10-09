@@ -76,6 +76,15 @@
     victory() { [392, 523, 659, 784].forEach((n, i) => tone(n, .28, {delay: i * .16, wave: 'triangle', gain: .075})); }
   };
 
+  // Sound effects for Jogo de Alvos: script.js calls window.tgSfx lazily (it loads before this file).
+  window.tgSfx = {
+    hit: () => tone(880, .06, {wave: 'triangle', gain: .05}),
+    decoy: () => tone(200, .18, {end: 60, wave: 'sawtooth', gain: .10}),
+    miss: () => tone(320, .20, {end: 90, wave: 'sawtooth', gain: .09}),
+    wave: () => [520, 660, 780].forEach((n, i) => tone(n, .12, {delay: i * .08, wave: 'sine', gain: .06})),
+    gameover: () => effects.gameover()
+  };
+
   // Controles de audio integrados a area do jogo.
   const panel = document.createElement('div');
   panel.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:10px 0;color:#fff;font:13px sans-serif';

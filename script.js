@@ -21,30 +21,108 @@
   (() => {
     const board=$('gameBoard'), score=$('score'), best=$('highscore'), restart=$('restartBtn'), sec=$('targetGameSection');
     if (!board || !score || !best || !restart) return;
-    let points=0, record=0, timer;
+    const sfx = k => { const f=window.tgSfx; if (f) f[k]&&f[k](); };
+    let record=0, tg=null;
     try {record=Number(localStorage.getItem('targetGameHighscore'))||0;} catch (_) {}
     best.textContent=record;
-    function spawn() {
-      if (!board.isConnected) return;
-      const t=document.createElement('div'); t.className='target';
-      t.textContent=['🎯','⭐','💎','🔥','⚡'][Math.floor(rnd(0,5))];
-      t.style.left=rnd(0,Math.max(0,board.clientWidth-50))+'px';
-      t.style.top=rnd(0,Math.max(0,board.clientHeight-50))+'px';
-      t.addEventListener('pointerdown',()=>{
-        if (!t.isConnected || t.dataset.hit) return;
-        t.dataset.hit='1'; score.textContent=++points;
-        if (points>record) {best.textContent=record=points;
-          try {localStorage.setItem('targetGameHighscore',String(record));} catch (_) {}}
-        t.classList.add('target-correct'); setTimeout(()=>t.remove(),150);
-      });
-      board.appendChild(t);
-      setTimeout(()=>{if(t.isConnected&&!t.dataset.hit){t.classList.add('target-missed');setTimeout(()=>t.remove(),500);}},2000);
+    // Difficulty per phase: spawns faster, targets live less, shrink, bombs and movement increase.
+    const waveFor=h=>Math.min(12,1+Math.floor(h/8));
+    const spawnEvery=w=>Math.max(420,1000-(w-1)*60);
+    const lifeFor=w=>Math.max(950,2000-(w-1)*110);
+    const sizeFor=w=>Math.max(34,50-(w-1)*2);
+    const decoyProb=w=>Math.min(.30,(w-1)*.03);
+    const moveProb=w=>Math.min(.45,(w-1)*.05);
+    const moveSpeed=w=>Math.min(120,30+(w-1)*8);
+    const multFor=c=>Math.min(5,1+Math.floor(c/4));
+    const values={'🎯':100,'⭐':150,'💎':200,'🔥':250,'⚡':300};
+    const pool=['🎯','🎯','⭐','⭐','💎','🔥','⚡'];
+    // HUD created by script: Lives, Fase, Combo (Score/Recorde already in HTML).
+    const hud=document.createElement('div');
+    hud.style.cssText='display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:10px 0;color:white;font:13px sans-serif';
+    hud.innerHTML='<span>Lives: <b id="tgLives">❤❤❤</b></span><span>Fase: <b id="tgWave">1</b></span><span>Combo: <b id="tgCombo">x1</b></span>';
+    sec.insertBefore(hud,board);
+    const livesEl=$('tgLives'), waveEl=$('tgWave'), comboEl=$('tgCombo');
+    const over=document.createElement('div'); over.className='tg-overlay';
+    board.appendChild(over);
+    function updateHUD(){ if(!tg)return;
+      score.textContent=tg.points; best.textContent=record;
+      livesEl.textContent='❤'.repeat(Math.max(0,tg.lives));
+      waveEl.textContent=tg.wave; comboEl.textContent='x'+multFor(tg.combo);
     }
-    function start() {clearInterval(timer); board.querySelectorAll('.target').forEach(t=>t.remove());
-      score.textContent=points=0;spawn();timer=setInterval(spawn,1000);}
-    restart.addEventListener('click',start);
-    if(!sec||!sec.classList.contains('minimized')) start();
-    targetHooks={open:()=>start(), close:()=>{clearInterval(timer);board.querySelectorAll('.target').forEach(t=>t.remove());}};
+    function clearChains(){ if(!tg)return; clearTimeout(tg.spawnTimeout); clearTimeout(tg.moveTimeout); tg.spawnTimeout=tg.moveTimeout=null; }
+    function clearTargets(){ board.querySelectorAll('.target').forEach(t=>t.remove()); }
+    function loseLife(){ if(!tg||tg.over)return; tg.lives--; tg.combo=0; updateHUD(); if(tg.lives<=0)gameOver(); }
+    function gameOver(){ if(!tg)return; tg.over=true; clearChains(); clearTargets();
+      over.innerHTML='<div><h2 style="color:#ff5566">Fim de jogo</h2><p>Score: '+tg.points+' · Recorde: '+record+'</p><p>Precizi: '+Math.round(100*tg.hits/Math.max(1,tg.clicks))+'% · Fasa: '+tg.wave+'</p></div>';
+      over.style.display='flex'; sfx('gameover'); }
+    function tickMove(){
+      if(!tg||tg.over)return;
+      for(const t of board.querySelectorAll('.target')){
+        if(!t.dataset.move||t.dataset.hit)continue;
+        const size=t.offsetWidth;
+        let x=Number(t.dataset.x), y=Number(t.dataset.y);
+        let vx=Number(t.dataset.vx), vy=Number(t.dataset.vy);
+        x+=vx*.05; y+=vy*.05;
+        const maxX=Math.max(0,board.clientWidth-size), maxY=Math.max(0,board.clientHeight-size);
+        if(x<0){x=0;vx=-vx;} if(x>maxX){x=maxX;vx=-vx;}
+        if(y<0){y=0;vy=-vy;} if(y>maxY){y=maxY;vy=-vy;}
+        t.dataset.x=String(x); t.dataset.y=String(y); t.dataset.vx=String(vx); t.dataset.vy=String(vy);
+        t.style.left=x+'px'; t.style.top=y+'px';
+      }
+      tg.moveTimeout=setTimeout(tickMove,50);
+    }
+    function scheduleNext(){ if(tg&&!tg.over)tg.spawnTimeout=setTimeout(spawnTarget,spawnEvery(tg.wave)); }
+    function spawnTarget(){
+      if(!tg||tg.over||!board.isConnected)return;
+      const w=tg.wave, size=sizeFor(w), bomb=Math.random()<decoyProb(w);
+      const t=document.createElement('div'); t.className=bomb?'target target-bomb':'target';
+      const emoji=bomb?'💣':pool[Math.floor(rnd(0,Math.min(7,2+w)))];
+      t.textContent=emoji;
+      const x=rnd(0,Math.max(0,board.clientWidth-size)), y=rnd(0,Math.max(0,board.clientHeight-size));
+      t.style.width=t.style.height=size+'px'; t.style.fontSize=Math.round(size*.55)+'px';
+      t.style.left=x+'px'; t.style.top=y+'px';
+      t.dataset.x=String(x); t.dataset.y=String(y);
+      t.dataset.kind=bomb?'bomb':'good'; t.dataset.value=bomb?'0':String(values[emoji]);
+      if(!bomb&&Math.random()<moveProb(w)){
+        t.dataset.move='1'; const ang=rnd(0,Math.PI*2), sp=moveSpeed(w);
+        t.dataset.vx=String(Math.cos(ang)*sp); t.dataset.vy=String(Math.sin(ang)*sp);
+      }
+      board.appendChild(t);
+      t.addEventListener('pointerdown',()=>{
+        if(!t.isConnected||t.dataset.hit)return;
+        t.dataset.hit='1'; tg.clicks++;
+        if(t.dataset.kind==='bomb'){
+          t.classList.add('target-wrong'); sfx('decoy');
+          setTimeout(()=>t.remove(),250); loseLife();
+        } else {
+          tg.hits++; tg.combo++;
+          tg.points+=Number(t.dataset.value)*multFor(tg.combo);
+          if(tg.points>record){record=tg.points;
+            try{localStorage.setItem('targetGameHighscore',String(record));}catch(_){}}
+          t.classList.add('target-correct'); sfx('hit');
+          setTimeout(()=>t.remove(),150);
+          const nw=waveFor(tg.hits);
+          if(nw>tg.wave){tg.wave=nw;sfx('wave');}
+          updateHUD();
+        }
+      });
+      setTimeout(()=>{
+        if(!t.isConnected||t.dataset.hit)return;
+        if(t.dataset.kind==='bomb'){t.remove();return;} // Expired decoy is harmless.
+        t.classList.add('target-missed'); sfx('miss');
+        setTimeout(()=>t.remove(),500); loseLife();
+      },lifeFor(w));
+      scheduleNext();
+    }
+    function newGame(){
+      clearChains(); clearTargets(); over.style.display='none';
+      tg={points:0,lives:3,wave:1,combo:0,hits:0,clicks:0,over:false,spawnTimeout:null,moveTimeout:null};
+      updateHUD(); spawnTarget(); tg.moveTimeout=setTimeout(tickMove,50);
+    }
+    restart.addEventListener('click',newGame);
+    if(!sec||!sec.classList.contains('minimized')) newGame();
+    targetHooks={open:()=>{ if(tg&&!tg.over){clearChains();spawnTarget();tg.moveTimeout=setTimeout(tickMove,50);} else newGame(); },
+      close:()=>{ if(!tg)return; clearChains(); clearTargets(); }};
   })();
 
   const canvas=$('siCanvas'), overlay=$('siOverlay'), startBtn=$('siStartBtn');

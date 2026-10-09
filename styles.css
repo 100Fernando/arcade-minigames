@@ -247,7 +247,7 @@ body {
 }
 
 .game-board::before {
-    content: 'Clique nos alvos!';
+    content: 'Clique alvos, avoid bombs!';
     position: absolute;
     top: 50%;
     left: 50%;
@@ -302,6 +302,35 @@ body {
 
 @keyframes targetFade {
     to { opacity: 0; transform: scale(0); }
+}
+
+.target-bomb {
+    background: radial-gradient(circle, #4a1020, #14060c);
+    border: 2px dashed #ff5566;
+}
+
+.target-wrong {
+    animation: targetShake 0.25s ease;
+}
+
+@keyframes targetShake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+}
+
+.tg-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #fff;
+    background: rgba(8, 10, 30, 0.92);
+    pointer-events: none;
+    font: 15px/1.5 sans-serif;
 }
 
 .restart-btn {

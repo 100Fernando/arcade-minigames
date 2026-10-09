@@ -16,24 +16,33 @@
     s.style.left=rnd(0,100)+'vw'; s.style.top=rnd(0,100)+'vh';
     s.style.animationDelay=rnd(0,3)+'s'; document.body.appendChild(s);
   }
-  // Nome do player: askad once, rememberad in localStorage, shared by both games.
+  // Nome do player: gate — the page requires a name before the games appear.
+  // Once confirmed it is saved in localStorage, so the first game-over can
+  // upload it to the database via window.pcName().
   (() => {
     const card=document.querySelector('.card');
-    const saved=localStorage.getItem('playerName');
-    const wrap=document.createElement('div');wrap.className='player-name';
-    wrap.style.cssText='display:flex;align-items:center;gap:8px;margin:10px 0;color:white;font:14px sans-serif';
-    const label=document.createElement('label');label.textContent='Nome: ';
-    const input=document.createElement('input');input.id='playerName';input.type='text';
-    input.maxLength=24;
-    input.style.cssText='padding:6px;border-radius:8px;background:#24243e;color:#fff;border:1px solid #667eea;width:180px;box-sizing:content-box;font:14px sans-serif';
-    if(saved!=null)input.value=saved;
-    label.appendChild(input);wrap.appendChild(label);
-    if(card)card.insertBefore(wrap,$('targetGameSection')||null);
-    const clean=v=>{const s=String(v||'').replace(/\s+/g,' ').trim();return s?s.slice(0,24):'Anônimo';};
-    const commit=()=>{try{localStorage.setItem('playerName',clean(input.value));}catch(_){}};
+    const gate=$('nameGate'), btn=$('confirmNameBtn'), input=$('playerName');
+    if(!card||!gate||!btn||!input) return;
+    const clean=v=>{const s=String(v||'').replace(/\s+/g,' ').trim();return s?s.slice(0,24):'';};
+    let saved=null; try{saved=localStorage.getItem('playerName');}catch(_){}
+    const reveal=()=>{ if(card)card.classList.remove('gate-pending'); };
+    const hide=()=>{ if(card)card.classList.add('gate-pending'); };
+    if(saved!=null&&clean(saved)!==''){
+      input.value=saved; reveal(); // returning visitor: games visible, field editable
+    } else {
+      hide(); // fresh visitor: games hidden until a name is confirmed
+    }
+    btn.addEventListener('click',()=>{
+      const n=clean(input.value); if(!n) return; // empty/whitespace stays pending
+      try{localStorage.setItem('playerName',n);}catch(_){}
+      window.pcName=()=>n;
+      reveal();
+    });
+    // Keep the stored name in sync if the player edits the field after reveal.
+    const commit=()=>{const n=clean(input.value); if(n){try{localStorage.setItem('playerName',n);}catch(_){}}};
     input.addEventListener('input',commit);
     input.addEventListener('change',commit);
-    window.pcName=()=>clean(input.value);
+    if(!window.pcName) window.pcName=()=>clean(input.value)||'Anônimo';
   })();
   // Mantem o outro minigame operacional.
   let targetHooks=null;

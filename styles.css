@@ -720,6 +720,66 @@ body {
 }
 
 /* ============================================
+   NAME GATE: games hidden until a name is confirmed
+   ============================================ */
+.name-gate {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin: 24px auto 30px;
+    padding: 18px 24px;
+    max-width: 360px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 15px;
+    text-align: center;
+}
+
+.name-gate label {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+    letter-spacing: 1px;
+}
+
+.name-gate input {
+    display: block;
+    width: 200px;
+    margin: 0 auto;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: #24243e;
+    color: #fff;
+    border: 1px solid #667eea;
+    font: 14px sans-serif;
+    box-sizing: content-box;
+}
+
+.name-gate button {
+    margin-top: 6px;
+    padding: 10px 26px;
+    font-size: 15px;
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.name-gate button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+/* While the gate is pending, every game section (and its ranking block)
+   is hidden, leaving only the name prompt visible. */
+.card.gate-pending .game-section { display: none; }
+.card.gate-pending .name-gate { display: flex; }
+
+/* ============================================
    MINIMIZED TILES ON SMALL SCREENS
    ============================================ */
 @media (max-width: 768px) {

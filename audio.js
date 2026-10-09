@@ -205,4 +205,29 @@
     if (musicStep % 4 === 0) tone(55, .09, {wave:'triangle',gain:.025});
     musicStep++;
   }, 390);
+
+  // Trilha ambiente para Jogo de Alvos: brighter, playful pentatonic arpeggio
+  // (marimba-like) with a soft bass pulse — deliberately different from the
+  // Space Invaders minor-key sine bass. Loops only while the alvos game is open
+  // and not game-over, and respects the same sound toggle/volume as the rest.
+  const tgSection = $('targetGameSection');
+  const tgBoard = $('gameBoard');
+  const tgOverlay = tgBoard ? tgBoard.querySelector('.tg-overlay') : null;
+  const tgRunning = () => tgSection && !tgSection.classList.contains('minimized') &&
+    tgOverlay && tgOverlay.style.display !== 'flex';
+  const tgMelody = [523.25, 659.25, 783.99, 659.25, 587.33, 783.99, 880.00, 659.25]; // C5 E5 G5 E5 D5 G5 A5 E5
+  const tgBass = [130.81, 0, 196.00, 0, 130.81, 0, 196.00, 0]; // C3 · G3 · C3 · G3
+  let tgMusicStep = 0, lastTgMusic = 0;
+  setInterval(() => {
+    if (!enabled || !tgRunning()) return;
+    if (!context || context.state !== 'running') { if (!init()) return; }
+    const now = performance.now();
+    if (now - lastTgMusic < 300) return;
+    lastTgMusic = now;
+    tone(tgMelody[tgMusicStep % tgMelody.length], .22, {wave:'triangle', gain:.022});
+    const b = tgBass[tgMusicStep % tgBass.length];
+    if (b) tone(b, .30, {wave:'sine', gain:.020});
+    if (tgMusicStep % 8 === 4) tone(1046.50, .12, {wave:'sine', gain:.014}); // sparkle accent
+    tgMusicStep++;
+  }, 310);
 })();

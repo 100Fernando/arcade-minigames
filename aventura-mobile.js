@@ -12,8 +12,8 @@
   // Responsividade sem alterar styles.css; os botoes nao cobrem o canvas.
   const css = document.createElement('style');
   css.textContent = `
-    #siGameSection.minimized > *:not(.game-header) { display:none; }
-    #siGameSection.minimized #siMobileControls { display:none; }
+    #siGameSection.minimized > *:not(.game-header) { display:none !important; }
+    #siGameSection.minimized #siMobileControls { display:none !important; }
     #siCanvas { display:block; width:100%; max-width:500px; height:auto; aspect-ratio:5/6; touch-action:none; }
     #siGameSection, #siGameContainer, #siGameSection .si-game-canvas-wrapper { min-width:0; max-width:100%; }
     #siGameSection .si-game-canvas-wrapper { position:relative; }

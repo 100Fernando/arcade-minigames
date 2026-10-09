@@ -346,9 +346,12 @@ body {
     text-align: center;
 }
 
-/* While minimized, only the header (icon + title) stays visible. */
+/* While minimized, only the header (icon + title) stays visible.
+   !important is required: the HUD, the difficulty controls and the audio panel are
+   built by the scripts with an inline style (style.cssText='display:flex;...'), and
+   inline declarations would otherwise win over this rule. */
 .game-section.minimized > *:not(.game-header) {
-    display: none;
+    display: none !important;
 }
 
 .game-section.minimized .game-header {

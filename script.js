@@ -16,6 +16,25 @@
     s.style.left=rnd(0,100)+'vw'; s.style.top=rnd(0,100)+'vh';
     s.style.animationDelay=rnd(0,3)+'s'; document.body.appendChild(s);
   }
+  // Nome do player: askad once, rememberad in localStorage, shared by both games.
+  (() => {
+    const card=document.querySelector('.card');
+    const saved=localStorage.getItem('playerName');
+    const wrap=document.createElement('div');wrap.className='player-name';
+    wrap.style.cssText='display:flex;align-items:center;gap:8px;margin:10px 0;color:white;font:14px sans-serif';
+    const label=document.createElement('label');label.textContent='Nome: ';
+    const input=document.createElement('input');input.id='playerName';input.type='text';
+    input.maxLength=24;
+    input.style.cssText='padding:6px;border-radius:8px;background:#24243e;color:#fff;border:1px solid #667eea;width:180px;box-sizing:content-box;font:14px sans-serif';
+    if(saved!=null)input.value=saved;
+    label.appendChild(input);wrap.appendChild(label);
+    if(card)card.insertBefore(wrap,$('targetGameSection')||null);
+    const clean=v=>{const s=String(v||'').replace(/\s+/g,' ').trim();return s?s.slice(0,24):'Anônimo';};
+    const commit=()=>{try{localStorage.setItem('playerName',clean(input.value));}catch(_){}};
+    input.addEventListener('input',commit);
+    input.addEventListener('change',commit);
+    window.pcName=()=>clean(input.value);
+  })();
   // Mantem o outro minigame operacional.
   let targetHooks=null;
   (() => {
@@ -54,7 +73,8 @@
     function loseLife(){ if(!tg||tg.over)return; tg.lives--; tg.combo=0; updateHUD(); if(tg.lives<=0)gameOver(); }
     function gameOver(){ if(!tg)return; tg.over=true; clearChains(); clearTargets();
       over.innerHTML='<div><h2 style="color:#ff5566">Fim de jogo</h2><p>Score: '+tg.points+' · Recorde: '+record+'</p><p>Precizi: '+Math.round(100*tg.hits/Math.max(1,tg.clicks))+'% · Fasa: '+tg.wave+'</p></div>';
-      over.style.display='flex'; sfx('gameover'); }
+      over.style.display='flex'; sfx('gameover');
+      window.submitScore && window.submitScore('alvos',tg.points); }
     function tickMove(){
       if(!tg||tg.over)return;
       for(const t of board.querySelectorAll('.target')){
@@ -148,6 +168,7 @@
   ];
   const keys={left:false,right:false,shoot:false,up:false,down:false};
   let g=null, raf=null, last=null, selected='normal';
+  let siBest=0;try{siBest=Number(localStorage.getItem('siHighscore'))||0;}catch(_){}
   // Interface criada pelo script: nenhuma mudanca no HTML ou CSS e necessaria.
   const controls=document.createElement('div');
   controls.style.cssText='display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:12px 0;color:#fff;font:14px sans-serif';
@@ -161,7 +182,7 @@
   section.insertBefore(controls,$('siGameContainer')||section.firstChild);
   const hud=document.createElement('div');hud.id='siScoreDisplay';
   hud.style.cssText='display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin:10px 0;color:white;font:12px monospace';
-  hud.innerHTML='<span>SCORE: <b id="siScore">00000</b></span><span>VIDAS: <b id="siLives">❤❤❤</b></span><span>FASE: <b id="siLevel">1</b></span><span>SPEED: <b id="siSpeed">1.00x</b></span><span id="siPowerUps"></span>';
+  hud.innerHTML='<span>SCORE: <b id="siScore">00000</b></span><span>BEST: <b id="siBest">00000</b></span><span>VIDAS: <b id="siLives">❤❤❤</b></span><span>FASE: <b id="siLevel">1</b></span><span>SPEED: <b id="siSpeed">1.00x</b></span><span id="siPowerUps"></span>';
   section.insertBefore(hud,controls);
   const bossBar=document.createElement('div');bossBar.style.cssText='display:none;max-width:500px;margin:8px auto;color:#fff;font:13px sans-serif;text-align:center';
   bossBar.innerHTML='<div id="siBossName"></div><div style="height:12px;background:#342039;border-radius:9px;overflow:hidden"><div id="siBossFill" style="height:100%;width:100%;background:#ff3366"></div></div>';
@@ -178,6 +199,8 @@
   }
   function updateHUD(){if(!g)return;
     $('siScore').textContent=String(g.score).padStart(5,'0');
+    if(g.score>siBest){siBest=g.score;try{localStorage.setItem('siHighscore',String(siBest));}catch(_){}}
+    $('siBest').textContent=String(siBest).padStart(5,'0');
     $('siLives').textContent='❤'.repeat(Math.max(0,g.lives));
     $('siLevel').textContent=g.level;$('siSpeed').textContent=g.speed.toFixed(2)+'x';
     $('siPowerUps').textContent=(g.timers.multishot?'🔥 ':'')+(g.timers.shield?'🛡️ ':'')+(g.timers.rapidfire?'⚡⚡':'');
@@ -247,7 +270,8 @@
   function nextLevel(){
     const wasBoss=g.level%5===0;
     if(g.level===15 && wasBoss){
-      g.ended=true;showStory('Vitória: sinal restaurado',
+      g.ended=true;window.submitScore && window.submitScore('si',g.score);
+      showStory('Vitória: sinal restaurado',
         'O núcleo foi destruído. As colônias voltaram a responder. A última defesa salvou a Terra.',
         ()=>{overlay.style.display='flex';const title=$('siTitle');
           if(title)title.textContent='Vitória!';startBtn.style.display='none';restartBtn.style.display='';});
@@ -266,6 +290,7 @@
   function end(){g.ended=true;keys.left=keys.right=keys.shoot=false;
     overlay.style.display='flex';const title=$('siTitle');if(title)title.textContent='Fim de jogo · fase '+g.level;
     startBtn.style.display='none';restartBtn.style.display='';
+    window.submitScore && window.submitScore('si',g.score);
   }
   function damage(){if(g.invulnerable>0||g.timers.shield>0)return;
     g.lives--;g.invulnerable=1200;burst(g.x+g.w/2,g.y,'#00ff88');

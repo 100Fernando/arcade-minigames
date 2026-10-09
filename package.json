@@ -1,0 +1,25 @@
+{
+  "name": "teste_ollama",
+  "version": "1.0.0",
+  "description": "",
+  "main": "audio.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/100Fernando/spaces-invaders-game.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/100Fernando/spaces-invaders-game/issues"
+  },
+  "homepage": "https://github.com/100Fernando/spaces-invaders-game#readme",
+  "dependencies": {
+    "dotenv": "^18.0.6",
+    "mysql2": "^3.24.5"
+  }
+}

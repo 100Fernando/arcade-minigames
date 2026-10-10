@@ -4,7 +4,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const TIMEOUT = 3000;
-  const GAMES = {alvos: '🎯 Alvos', si: '👾 Space Invaders'};
+  const GAMES = {alvos: '🎯 Alvos', si: '👾 Space Invaders', arkanoid: '🧈 Arkanoid'};
 
   async function getJson(url) {
     const ac = new AbortController();
@@ -80,7 +80,7 @@
   }
 
   // One board per game, at the end of each section.
-  for (const [secId, game] of [['targetGameSection', 'alvos'], ['siGameSection', 'si']]) {
+  for (const [secId, game] of [['targetGameSection', 'alvos'], ['siGameSection', 'si'], ['arkanoidGameSection', 'arkanoid']]) {
     const sec = $(secId);
     if (sec) makeBlock(sec, game);
   }
@@ -92,7 +92,7 @@
     const select = document.createElement('select');
     select.setAttribute('aria-label', 'Filter');
     select.style.cssText = 'display:block;margin:8px auto 0;padding:6px;border-radius:8px;background:#24243e;color:#fff;border:1px solid #667eea;font:13px sans-serif';
-    for (const [v, t] of [['all', 'All'], ['alvos', '🎯 Alvos'], ['si', '👾 Space Invaders']]) {
+    for (const [v, t] of [['all', 'All'], ['alvos', '🎯 Alvos'], ['si', '👾 Space Invaders'], ['arkanoid', '🧈 Arkanoid']]) {
       const o = document.createElement('option'); o.value = v; o.textContent = t; select.appendChild(o);
     }
     try { select.value = localStorage.getItem('rankingFilter') || 'all'; } catch (_) { select.value = 'all'; }

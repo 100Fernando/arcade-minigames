@@ -46,6 +46,24 @@
             </div>
             <button class="restart-btn" id="restartBtn" type="button">Reiniciar Jogo</button>
         </div>
+        <div class="game-section minimized" id="arkanoidGameSection">
+            <div class="game-header"><div class="game-icon" id="arkanoidIcon" title="Clique para abrir o jogo">🧈</div><h2 class="game-title">🧈 Arkanoid</h2></div>
+            <div class="ak-game-container" id="akGameContainer">
+                <div class="ak-canvas-wrapper">
+                    <canvas id="akCanvas" width="500" height="600"></canvas>
+                    <div class="overlay" id="akOverlay">
+                        <div class="overlay-content">
+                            <h2 id="akTitle">Arkanoid: Neon Breaker</h2>
+                            <div class="overlay-controls">
+                                <button class="btn-primary" id="akStartBtn" type="button">Start</button>
+                                <button class="btn-secondary" id="akRestartBtn" type="button">Restart</button>
+                            </div>
+                            <div class="overlay-hint">← → Move | SPACE Launch | R Restart</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="script.js"></script>
     <script src="ranking.js"></script>

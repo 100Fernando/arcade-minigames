@@ -539,11 +539,23 @@
   const card=document.querySelector('.card'),minimize=$('minimizeBtn');
   if(card&&minimize){card.classList.add('visible');minimize.addEventListener('click',()=>{
     card.classList.toggle('visible');card.classList.toggle('minimized');});}
+  // Arkanoid: Neon Breaker — Phase 0 skeleton (engine grows in later phases).
+  let akHooks=null;
+  (() => {
+    const akCanvas=$('akCanvas'), akOverlay=$('akOverlay'), akStart=$('akStartBtn');
+    const akRestart=$('akRestartBtn'), akSec=$('arkanoidGameSection');
+    if(!akCanvas||!akOverlay||!akStart||!akRestart||!akSec) return;
+    const akCtx=akCanvas.getContext('2d'); if(!akCtx) return;
+    const AW=akCanvas.width, AH=akCanvas.height;
+    function draw(){ if(!akCtx)return; akCtx.fillStyle='#101329'; akCtx.fillRect(0,0,AW,AH); }
+    akHooks={open:()=>{ draw(); }, close:()=>{ }};
+    if(!akSec.classList.contains('minimized')) draw();
+  })();
   const hooks={targetGameSection:targetHooks, siGameSection:{
     open:()=>{if(g&&!g.ended&&raf===null)run();else draw();},
     close:()=>{if(raf!==null){cancelAnimationFrame(raf);raf=null;}last=null;}
-  }};
-  for(const [iconId,sectionId] of [['targetGameIcon','targetGameSection'],['spaceInvadersIcon','siGameSection']]){
+  }, arkanoidGameSection:akHooks};
+  for(const [iconId,sectionId] of [['targetGameIcon','targetGameSection'],['spaceInvadersIcon','siGameSection'],['arkanoidIcon','arkanoidGameSection']]){
     const icon=$(iconId),area=$(sectionId),hook=hooks[sectionId];
     if(!icon||!area)continue;
     let handled=null;
@@ -551,7 +563,7 @@
       if(stamp===handled)return;handled=stamp;
       const wasCollapsed=area.classList.contains('minimized');
       area.classList.toggle('minimized');
-      if(card){const anyOpen=!$('targetGameSection').classList.contains('minimized')||!$('siGameSection').classList.contains('minimized');card.classList.toggle('game-open',anyOpen);}
+      if(card){const anyOpen=!$('targetGameSection').classList.contains('minimized')||!$('siGameSection').classList.contains('minimized')||!$('arkanoidGameSection').classList.contains('minimized');card.classList.toggle('game-open',anyOpen);}
       if(!hook)return;
       if(wasCollapsed)hook.open();else hook.close();
     };

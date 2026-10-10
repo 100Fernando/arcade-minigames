@@ -11,7 +11,7 @@ const env = dotenv.parse(fs.readFileSync(new URL('.env', `file://${process.cwd()
 const DB = {host: env.HOST, port: Number(env.PORT || 3306), user: env.USER, password: env.PASSWORD, database: env.DATABASE};
 const TABLE = 'ranking';
 const PORT = Number(process.env.PORT || 8765);
-const GAMES = ['alvos', 'si'];
+const GAMES = ['alvos', 'si', 'arkanoid'];
 
 // ---- database: lazy, reconnects after any connection-level failure ----
 // The remote host kills idle sockets (ECONNRESET), so a dead connection must

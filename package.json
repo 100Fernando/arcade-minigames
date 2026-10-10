@@ -20,6 +20,7 @@
   "homepage": "https://github.com/100Fernando/spaces-invaders-game#readme",
   "dependencies": {
     "dotenv": "^18.0.6",
+    "jose": "^6.2.12",
     "mysql2": "^3.24.5"
   }
 }

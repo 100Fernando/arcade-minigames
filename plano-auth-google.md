@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each. Never break the 3 games.
 
-**Status:** � Phase A complete (DB reconciled + verified) · Phase B wired (One Tap, login optional) — Phase C (server verify) still pending, so a token is not yet checked. Phases D-E pending.
+**Status:** 🟡 Phases A–C complete (DB + browser One Tap + server JWKS verify, `/api/score` now 401s without a valid token) · login still **disabled in practice** because no `GOOGLE_CLIENT_ID` is configured — Phase E.2 (Google Cloud Console) pending. Phase D done by design (name only).
 
 **Phase A result (verified on live DB):**
 - New table **`google_users`** created: `id · google_sub varchar(255) UNIQUE · name varchar(32) · email varchar(128) · picture varchar(512) · hd varchar(64) · locale varchar(16) · created_at · last_login`.
@@ -73,21 +73,21 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 ## Phase C — Server verifies the token (the security core)
 
-- [ ] C.1 Add dep `jose` (pure JS, verifies JWT against Google JWKS). No native modules.
-- [ ] C.2 `POST /api/login`: verify `id_token` signature via JWKS `https://www.googleapis.com/oauth2/v3/certs`, check `iss ∈ {https://accounts.google.com, oidc.net}` and `aud == GOOGLE_CLIENT_ID` and `exp`.
-- [ ] C.3 On valid: `INSERT/UPDATE users` (by `google_sub`), return `{ok, uid, name, email, picture}`.
-- [ ] C.4 `POST /api/score`: require a valid `id_token` in the body → verify → extract `sub` → resolve `user_id` → `INSERT ranking (user_id, game, score)`. Reject (401) if token invalid → **closes the current cheat hole**.
-- [ ] C.5 `board()` JOINs `users` to show `name` (never email) in the public ranking.
-- [ ] C.6 `.env`: add `GOOGLE_CLIENT_ID` (gitignored, like DB creds). `.env.example` documents it.
+- [x] C.1 Dep `jose` (^6.2.12) added to `package.json` — pure JS, verifies against Google JWKS. No native modules.
+- [x] C.2 `POST /api/login`: `jose.createRemoteJWKSet('https://www.googleapis.com/oauth2/v3/certs')` + `jwtVerify` with `issuer ∈ {accounts.google.com, oidc.net/…}`, `aud == GOOGLE_CLIENT_ID`, `clockTolerance: 60`. Built lazily so a dead Google endpoint never kills the server.
+- [x] C.3 On valid: `SELECT`/`INSERT`/`UPDATE google_users` by `google_sub` (updates `last_login`), returns `{ok, uid, name, email, picture}`.
+- [x] C.4 `POST /api/score`: verifies `body.token` first → resolves `user_id` → `INSERT ranking (player_name, game, score, user_id)`. Forged/absent token → **401 `login required`** (verified live: `{"error":"login required"} HTTP 401`).
+- [x] C.5 `board()` returns `name` + `uid` only — **no JOIN needed**: the verified Google name is written into `player_name` at insert time, so email/photo are never read for display. (Deviation from the plan's JOIN: simpler, and old manual rows keep their stored name.)
+- [x] C.6 `.env.example` documents `GOOGLE_CLIENT_ID`; `.env` stays gitignored. `/api/health` reports `login: "off"|"google"` so the mode is visible.
 
-**Acceptance:** forged/absent token → score rejected; valid token → row linked to `user_id`; ranking shows display name only.
+**Acceptance (live, `login: off` because no client id configured):** forged token → 401; `/api/login` → 501 `login disabled`; ranking → 200 with `uid: null` for legacy rows. A **valid** token path is code-complete but untested until a real `GOOGLE_CLIENT_ID` exists (Phase E.2).
 
 ---
 
 ## Phase D — ranking.js + display
 
-- [ ] D.1 Ranking rows keep showing `name` (from verified identity). No email/photo in public board.
-- [ ] D.2 ~~Avatar~~ — **decided: Name only**, photo stored but never rendered.
+- [x] D.1 Ranking rows keep showing `name` (the verified Google name, written at insert time). `board()` also returns `uid` for internal use — never rendered. No email/photo in the public board.
+- [x] D.2 ~~Avatar~~ — **decided: Name only**, photo stored in `google_users` but never rendered. `ranking.js` needed no change (it reads only `name`/`score`).
 
 ---
 

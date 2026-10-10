@@ -6,6 +6,7 @@ const fs = require('fs');
 const http = require('http');
 const mysql = require('mysql2');
 const dotenv = require('dotenv');
+const jose = require('jose');
 
 const env = dotenv.parse(fs.readFileSync(new URL('.env', `file://${process.cwd()}/`)));
 const DB = {host: env.HOST, port: Number(env.PORT || 3306), user: env.USER, password: env.PASSWORD, database: env.DATABASE};
@@ -13,6 +14,29 @@ const TABLE = 'ranking';
 const USERS_TABLE = 'google_users';
 const PORT = Number(process.env.PORT || 8765);
 const GAMES = ['alvos', 'si', 'arkanoid'];
+
+// ---- Google OIDC: the client id is public, but it must match the token's aud ----
+const GOOGLE_CLIENT_ID = String(env.GOOGLE_CLIENT_ID || '').trim();
+const GOOGLE_ISSUERS = ['https://accounts.google.com', 'https://oidc.net/https://accounts.google.com'];
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+let jwks = null; // built on first use: a dead Google endpoint must not kill the server
+
+// Returns the verified claims, or null when the token is forged/expired/mismatched.
+async function verifyToken(idToken) {
+  if (!GOOGLE_CLIENT_ID || !jose || typeof idToken !== 'string' || !idToken) return null;
+  if (idToken.length > 4000 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(idToken)) return null;
+  try {
+    if (!jwks) jwks = jose.createRemoteJWKSet(GOOGLE_JWKS_URL);
+    const {claims} = await jose.jwtVerify(idToken, jwks, {
+      issuer: GOOGLE_ISSUERS, audience: GOOGLE_CLIENT_ID, clockTolerance: 60,
+    });
+    if (!claims.sub) return null;
+    return claims;
+  } catch (e) {
+    console.log('[auth] token rejected: ' + (e.code || e.message || '?'));
+    return null;
+  }
+}
 
 // ---- database: lazy, reconnects after any connection-level failure ----
 // The remote host kills idle sockets (ECONNRESET), so a dead connection must
@@ -48,13 +72,13 @@ function q(sql, args) {
 // Best score per player, newest runs ignored. Filtering and deduping in JS keeps
 // the SQL plain, so an old MySQL version is enough.
 async function board(game, limit) {
-  const rows = await q('SELECT player_name, game, score FROM ' + TABLE + ' ORDER BY score DESC LIMIT 500', []);
+  const rows = await q('SELECT player_name, game, score, user_id FROM ' + TABLE + ' ORDER BY score DESC LIMIT 500', []);
   const seen = new Set(), out = [];
   for (const r of rows) {
     if (game !== 'all' && r.game !== game) continue;
     if (seen.has(r.player_name)) continue;
     seen.add(r.player_name);
-    out.push({name: r.player_name, game: r.game, score: Number(r.score)});
+    out.push({name: r.player_name, game: r.game, score: Number(r.score), uid: r.user_id == null ? null : Number(r.user_id)});
     if (out.length >= limit) break;
   }
   return out;
@@ -102,7 +126,40 @@ function handle(req, rq) {
     return rq.end();
   }
 
-  if (path === '/api/health') return json(rq, {ok: true, db: DB.database, table: TABLE});
+  if (path === '/api/health') return json(rq, {ok: true, db: DB.database, table: TABLE, login: GOOGLE_CLIENT_ID ? 'google' : 'off'});
+
+  // ---- POST /api/login {id_token}: the browser's One Tap credential, verified here ----
+  if (path === '/api/login') {
+    if (req.method !== 'POST') return json(rq, {error: 'use POST'}, 405);
+    if (!GOOGLE_CLIENT_ID) return json(rq, {error: 'login disabled'}, 501);
+    let raw = '';
+    req.on('data', c => { raw += c; if (raw.length > 6000) req.destroy(); });
+    req.on('end', async () => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return json(rq, {error: 'bad json'}, 400); }
+      const claims = await verifyToken(body.id_token);
+      if (!claims) return json(rq, {error: 'bad token'}, 401);
+      const sub = String(claims.sub).slice(0, 255);
+      const name = cleanName(claims.name).slice(0, 32);
+      const email = String(claims.email_verified ? claims.email || '' : '').slice(0, 128);
+      const picture = String(claims.picture || '').slice(0, 512);
+      const hd = String(claims.hd || '').slice(0, 64);
+      const locale = String(claims.locale || '').slice(0, 16);
+      try {
+        const rows = await q('SELECT id FROM ' + USERS_TABLE + ' WHERE google_sub = ?', [sub]);
+        let uid;
+        if (rows.length) {
+          uid = Number(rows[0].id);
+          await q('UPDATE ' + USERS_TABLE + ' SET name = ?, email = ?, picture = ?, hd = ?, locale = ?, last_login = NOW() WHERE google_sub = ?', [name, email, picture, hd, locale, sub]);
+        } else {
+          const ins = await q('INSERT INTO ' + USERS_TABLE + ' (google_sub, name, email, picture, hd, locale, last_login) VALUES (?, ?, ?, ?, ?, ?, NOW())', [sub, name, email, picture, hd, locale]);
+          uid = Number(ins.insertId || ins.lastInsertRowid);
+        }
+        json(rq, {ok: true, uid, name, email, picture});
+      } catch (e) { json(rq, {error: e.code}, 502); }
+    });
+    return;
+  }
 
   if (path === '/api/ranking') {
     const game = GAMES.includes(qs.game) ? qs.game : 'all';
@@ -124,11 +181,25 @@ function handle(req, rq) {
       const game = GAMES.includes(body.game) ? body.game : null;
       const score = Number(body.score);
       if (!game || !Number.isInteger(score) || score < 0 || score > 1e9) return json(rq, {error: 'bad fields'}, 400);
+      // A score only reaches the DB when it carries a verified Google token: this
+      // closes the old hole where any visitor could POST any name/any score.
+      const claims = await verifyToken(body.token);
+      if (!claims) return json(rq, {error: 'login required'}, 401);
+      const sub = String(claims.sub).slice(0, 255);
+      const gname = cleanName(claims.name);
       try {
-        await q('INSERT INTO ' + TABLE + ' (player_name, game, score) VALUES (?, ?, ?)', [name, game, score]);
+        const ur = await q('SELECT id FROM ' + USERS_TABLE + ' WHERE google_sub = ?', [sub]);
+        let uid;
+        if (ur.length) uid = Number(ur[0].id);
+        else {
+          const ins = await q('INSERT INTO ' + USERS_TABLE + ' (google_sub, name, email, picture, hd, locale, last_login) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+            [sub, gname, String(claims.email_verified ? claims.email || '' : '').slice(0, 128), String(claims.picture || '').slice(0, 512), String(claims.hd || '').slice(0, 64), String(claims.locale || '').slice(0, 16)]);
+          uid = Number(ins.insertId || ins.lastInsertRowid);
+        }
+        await q('INSERT INTO ' + TABLE + ' (player_name, game, score, user_id) VALUES (?, ?, ?, ?)', [gname, game, score, uid]);
         const rows = await board(game, 50);
-        const rank = rows.findIndex(r => r.name === name) + 1;
-        json(rq, {ok: true, name, game, score, rank: rank || null});
+        const rank = rows.findIndex(r => r.uid === uid || r.name === gname) + 1;
+        json(rq, {ok: true, name: gname, game, score, rank: rank || null});
       } catch (e) {
         json(rq, {error: e.code}, 502);
       }

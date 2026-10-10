@@ -44,6 +44,52 @@
     input.addEventListener('change',commit);
     if(!window.pcName) window.pcName=()=>clean(input.value)||'Anônimo';
   })();
+  // Google Identity (One Tap) — OPTIONAL. Games never wait for it: no client id
+  // configured, or a file:// origin, simply leaves the manual name gate in place.
+  (() => {
+    const box=document.querySelector('.google-login');
+    if(!box) return;
+    const clientId=(box.getAttribute('data-client-id')||'').trim();
+    if(!clientId) return; // login disabled: manual gate is the only path
+    if(!/^https?:/.test(location.protocol)) return; // gsi refuses file://
+    window.googleCredential=null;
+    const s=document.createElement('script');
+    s.src='https://accounts.google.com/gsi/client'; s.async=true; s.defer=true;
+    s.onerror=()=>console.log('[login] gsi client unavailable — manual name kept');
+    document.head.appendChild(s);
+    const show=(label)=>{
+      box.classList.add('enabled');
+      const t=box.querySelector('#googleOneTap');
+      if(t)t.textContent=label;
+    };
+    show('Sign in with Google to save your score');
+    const onCredential=(cred)=>{
+      const id_token=typeof cred==='string'?cred:(cred&&cred.credential)||'';
+      if(!id_token) return;
+      fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_token})})
+        .then(r=>r.json())
+        .then(d=>{
+          if(!d||!d.ok) { console.log('[login] rejected by server'); return; }
+          window.googleCredential=id_token;
+          const nm=String(d.name||'').slice(0,24)||'Anônimo';
+          try{localStorage.setItem('playerName',nm);}catch(_){}
+          const inp=document.getElementById('playerName');
+          if(inp) inp.value=nm;
+          window.pcName=()=>nm;
+          window.googleUser={uid:d.uid,name:d.name,email:d.email,picture:d.picture};
+          if(box) box.textContent='Signed in: '+nm;
+        })
+        .catch(()=>console.log('[login] /api/login unreachable — manual name kept'));
+    };
+    const boot=()=>{
+      if(!window.google) return;
+      try{
+        window.google.accounts.id.prompt(onCredential);
+      }catch(e){console.log('[login] One Tap unavailable — manual name kept');}
+    };
+    if(window.google) boot();
+    else window.addEventListener('load',boot);
+  })();
   // Mantem o outro minigame operacional.
   let targetHooks=null;
   (() => {

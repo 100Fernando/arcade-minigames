@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each. Never break the 3 games.
 
-**Status:** 🟢 Phase A complete (DB reconciled + verified) — Phases B-E pending.
+**Status:** � Phase A complete (DB reconciled + verified) · Phase B wired (One Tap, login optional) — Phase C (server verify) still pending, so a token is not yet checked. Phases D-E pending.
 
 **Phase A result (verified on live DB):**
 - New table **`google_users`** created: `id · google_sub varchar(255) UNIQUE · name varchar(32) · email varchar(128) · picture varchar(512) · hd varchar(64) · locale varchar(16) · created_at · last_login`.
@@ -60,12 +60,12 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 ## Phase B — Browser login (Google Identity Services, One Tap)
 
-- [ ] B.1 `index.html`: load `https://accounts.google.com/gsi/client` + a container for the One Tap prompt inside the name-gate area.
-- [ ] B.2 `script.js`: call `google.accounts.id.prompt()`; on success callback receives `credential` (the **id_token JWT**).
-- [ ] B.3 `POST /api/login {id_token}` → on `{ok, uid, name, email, picture}` store verified identity in a module var.
-- [ ] B.4 `pcName()` returns the **verified** name (fallback to gate name if login skipped).
-- [ ] B.5 Keep the manual name gate as a **fallback** (login optional): if Google not configured/offline, current behavior stays.
-- [ ] B.6 `CLIENT_ID` is public (in HTML), not a secret.
+- [x] B.1 `index.html`: `.google-login` container (`id="googleLogin"`, `data-client-id=""`) inside the name gate; gsi/client is loaded by `script.js` only when a client id is set (so `file://` never tries).
+- [x] B.2 `script.js`: `google.accounts.id.prompt(cb)` → `credential` (id_token JWT) kept in `window.googleCredential`.
+- [x] B.3 `POST /api/login {id_token}` → on `{ok, uid, name, email, picture}` stores `window.googleUser` + token. **Server endpoint still missing (Phase C) → login currently rejected, manual name kept.**
+- [x] B.4 `pcName()` returns the verified Google name (and `playerName` input is synced); otherwise the gate name.
+- [x] B.5 Manual name gate stays the fallback: no client id, `file://`, gsi blocked, or `/api/login` unreachable → games play, name is local.
+- [x] B.6 `CLIENT_ID` is public: it lives in `index.html` as `data-client-id`; `.env.example` documents `GOOGLE_CLIENT_ID` for the server check (Phase C).
 
 **Acceptance:** One Tap shows; after sign-in, `window.pcName()` returns the Google name; login failure never blocks the games.
 

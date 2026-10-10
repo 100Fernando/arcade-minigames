@@ -837,6 +837,24 @@ body {
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
 }
 
+/* Optional Google sign-in strip, rendered above the manual name field.
+   Empty when Google login is not configured, so the gate never depends on it. */
+.name-gate .google-login {
+    display: none;
+    align-self: stretch;
+    margin-bottom: 10px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.7);
+}
+.name-gate .google-login.enabled { display: block; }
+.name-gate .google-login .gwt {
+    display: inline-block;
+    width: 26px; height: 26px;
+    margin: 0 6px;
+    vertical-align: middle;
+}
+.name-gate .google-login .gwt-off { opacity: 0.35; filter: grayscale(1); }
+
 /* While the gate is pending, every game section (and its ranking block)
    is hidden, leaving only the name prompt visible. */
 .card.gate-pending .game-section { display: none; }

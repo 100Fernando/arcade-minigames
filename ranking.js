@@ -29,8 +29,9 @@
   // Fire-and-forget: the game never waits for the network.
   window.submitScore = (game, score) => {
     const name = window.pcName ? window.pcName() : 'Anônimo';
+    const token = window.googleCredential || null; // verified Google id_token, null = manual name
     (async () => {
-      await postJson('/api/score', {name, game, score});
+      await postJson('/api/score', {name, game, score, token});
       refresh(game); refresh('all'); // success or not, the board is re-read
     })();
   };

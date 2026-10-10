@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each. Never break the 3 games.
 
-**Status:** 🟡 Phases A–C complete (DB + browser One Tap + server JWKS verify, `/api/score` now 401s without a valid token) · login still **disabled in practice** because no `GOOGLE_CLIENT_ID` is configured — Phase E.2 (Google Cloud Console) pending. Phase D done by design (name only).
+**Status:** � Phases A–C complete + **verified end-to-end by `test-auth-token.js` (8/8 PASS)** — DB reconciled, browser One Tap wired, server JWKS verify works, `/api/score` 401s without a valid token, valid token links `ranking.user_id`. Login is **code-complete and proven**; only the **user-side config** remains (Phase E.2: create the Google Cloud Console Web OAuth client and fill the SAME id in BOTH `data-client-id` in `index.html` AND `GOOGLE_CLIENT_ID` in `.env`). Phase D done by design (name only).
 
 **Phase A result (verified on live DB):**
 - New table **`google_users`** created: `id · google_sub varchar(255) UNIQUE · name varchar(32) · email varchar(128) · picture varchar(512) · hd varchar(64) · locale varchar(16) · created_at · last_login`.
@@ -93,6 +93,7 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 ## Phase E — Playtest + commit
 
+- [x] E.0 `test-auth-token.js` (added): mints a local RSA JWK + local JWKS, spawns the real `server.js` with `GOOGLE_CLIENT_ID`/`JWKS_URL` env overrides, and drives the **valid-token path end to end** — 8 checks PASS (forged→401, `/api/login`→uid, `/api/score`→`user_id` link, DB cleanup). Proves the code works without a real Google client.
 - [ ] E.1 Must run via `node server.js` at `http://localhost:8765` (Google login **won't work on `file://`**).
 - [ ] E.2 Create a Google Cloud Console project → OAuth Client (Web) → allowed origin `http://localhost:8765` → copy `client_id` to `.env`.
 - [ ] E.3 Browser test: One Tap → login → submit a score → confirm DB row has `user_id` and `game='arkanoid'`.

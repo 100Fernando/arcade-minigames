@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each one. Never break the other two games.
 
-**Status:** � Phase 0 complete (skeleton integrated + verified in browser) — Phases 1-6 pending.
+**Status:** 🟡 Phase 0 + Phase 1 complete (core engine verified in browser) — Phases 2-6 pending.
 
 ---
 
@@ -26,15 +26,15 @@ A new game id **`arkanoid`** must be registered everywhere, or scores/ranking si
 
 Canvas 500×600, `raf`/`last` loop like SI. Reuse `clamp`, `rnd`.
 
-- [ ] 1.1 State `ak={paddle:{x,w}, balls:[{x,y,vx,vy,r}], bricks:[], lives, points, phase, combo, over, ...}`.
-- [ ] 1.2 Paddle: `← →`/`A D` move; clamp to canvas; width `ak.paddle.w` (base 80).
-- [ ] 1.3 Ball physics: circular vs AABB bricks; **bounce angle from hit position on paddle** (`offset=(ballX-paddleX)/paddleW → angle = offset*maxTilt`), keep vy sign upward.
-- [ ] 1.4 Brick grid: rows×cols, each `{x,y,w,h,hp,type}`; hit → `hp--`, remove at 0, `points += value*combo`.
-- [ ] 1.5 Launch: ball rests on paddle until SPACE; `akStartBtn`/`akRestartBtn` start a run.
-- [ ] 1.6 Lose life when ball falls below paddle; `lives<=0` → `gameOver()` + `window.submitScore('arkanoid',points)`.
-- [ ] 1.7 HUD (script-built, like Alvos): Lives ❤, Fase, Combo, Score/Recorde (localStorage `akHighscore`).
+- [x] 1.1 State `ak={paddle:{x,w}, balls:[{x,y,vx,vy,r}], bricks:[], lives, points, phase, combo, over, ...}`.
+- [x] 1.2 Paddle: `← →`/`A D` move; clamp to canvas; width `ak.paddle.w` (base 80).
+- [x] 1.3 Ball physics: circular vs AABB bricks; **bounce angle from hit position on paddle** (`offset=(ballX-paddleX)/paddleW → angle = offset*maxTilt`), keep vy sign upward.
+- [x] 1.4 Brick grid: rows×cols, each `{x,y,w,h,hp,type}`; hit → `hp--`, remove at 0, `points += value*combo`.
+- [x] 1.5 Launch: ball rests on paddle until SPACE; `akStartBtn`/`akRestartBtn` start a run.
+- [x] 1.6 Lose life when ball falls below paddle; `lives<=0` → `gameOver()` + `window.submitScore('arkanoid',points)`.
+- [x] 1.7 HUD (script-built, like Alvos): Lives ❤, Fase, Combo, Score/Recorde (localStorage `akHighscore`).
 
-**Acceptance criteria:** ball bounces off walls/paddle/bricks; angle changes with paddle hit position; clearing all bricks advances phase; 3 lives; score persists locally.
+**Acceptance criteria:** ball bounces off walls/paddle/bricks; angle changes with paddle hit position; clearing all bricks advances phase; 3 lives; score persists locally. ✅ verified in browser (score/combo rise, lives 3→2→1 with relaunch, `akHighscore` persists).
 
 ---
 

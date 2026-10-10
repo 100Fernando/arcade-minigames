@@ -10,6 +10,7 @@ const dotenv = require('dotenv');
 const env = dotenv.parse(fs.readFileSync(new URL('.env', `file://${process.cwd()}/`)));
 const DB = {host: env.HOST, port: Number(env.PORT || 3306), user: env.USER, password: env.PASSWORD, database: env.DATABASE};
 const TABLE = 'ranking';
+const USERS_TABLE = 'google_users';
 const PORT = Number(process.env.PORT || 8765);
 const GAMES = ['alvos', 'si', 'arkanoid'];
 
@@ -84,7 +85,10 @@ const TYPES = {'index.html': 'text/html; charset=utf-8', 'styles.css': 'text/css
 
 function createTable() {
   const sql = fs.readFileSync(new URL('bootstrap.sql', `file://${process.cwd()}/`)).toString();
-  return q(sql, []).then(() => console.log('[ok] table ' + TABLE + ' created'));
+  return q(sql, []).then(() => console.log('[ok] tables ' + USERS_TABLE + ' + ' + TABLE + ' created'));
+}
+function tableExists(name) {
+  return q('SHOW TABLES', []).then((rows) => rows.some((t) => String(Object.values(t)[0]).toLowerCase() === String(name).toLowerCase()));
 }
 
 function handle(req, rq) {
@@ -144,10 +148,38 @@ function handle(req, rq) {
 (async () => {
   if (process.argv.includes('--ensure-table')) {
     try {
-      const tables = await q('SHOW TABLES', []);
-      const exists = tables.some(t => String(Object.values(t)[0]).toLowerCase() === TABLE);
-      if (exists) console.log('[ok] table ' + TABLE + ' already exists');
-      else await createTable();
+      const sql = fs.readFileSync(new URL('bootstrap.sql', `file://${process.cwd()}/`)).toString();
+      // Split into statements on ';', drop comment-only lines, keep CREATE TABLE ones.
+      const stmts = sql.split(';')
+        .map((s) => s.split(/\r?\n/).filter((ln) => !/^\s*--/.test(ln)).join(' ').trim())
+        .filter((s) => /^CREATE\s+TABLE\s+(\w+)/i.test(s));
+      for (const s of stmts) {
+        const name = s.replace(/^CREATE\s+TABLE\s+(\w+).*$/i, '$1');
+        if (await tableExists(name)) { console.log('[ok] table ' + name + ' already exists'); continue; }
+        await q(s, []);
+        console.log('[ok] table ' + name + ' created');
+      }
+      // Reconcile an existing `ranking` to the new schema without recreating it
+      // (never clobber live rows): widen the game ENUM and add the user_id FK.
+      if (await tableExists(TABLE)) {
+        const cols = await q('DESCRIBE ' + TABLE, []);
+        const byName = {};
+        for (const c of cols) byName[String(c.Field).toLowerCase()] = c;
+        const gameCol = byName['game'];
+        if (gameCol) {
+          const type = String(gameCol.Type || gameCol.sql_type || '').toLowerCase();
+          if (!type.includes('arkanoid')) {
+            const enumVals = ["alvos", "si", "arkanoid"];
+            const nn = String(gameCol.Null || '').toUpperCase() === 'NO' ? 'NOT NULL' : '';
+            await q('ALTER TABLE ' + TABLE + " MODIFY game ENUM('" + enumVals.join("','") + "')" + (nn ? ' ' + nn : ''), []);
+            console.log('[ok] ranking.game ENUM widened to include arkanoid');
+          } else console.log('[ok] ranking.game ENUM already includes arkanoid');
+        }
+        if (!byName['user_id']) {
+          await q('ALTER TABLE ' + TABLE + ' ADD user_id INT NULL', []);
+          console.log('[ok] ranking.user_id added');
+        } else console.log('[ok] ranking.user_id already present');
+      }
     } catch (e) {
       console.log('[db] ' + e.code + ' ' + (e.msg || ''));
       process.exit(1);

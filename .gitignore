@@ -18,6 +18,9 @@ env/
 *.swp
 *.swo
 
+# Test run artifacts
+auth-test.log
+
 # OS
 .DS_Store
 Thumbs.db

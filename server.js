@@ -16,9 +16,11 @@ const PORT = Number(process.env.PORT || 8765);
 const GAMES = ['alvos', 'si', 'arkanoid'];
 
 // ---- Google OIDC: the client id is public, but it must match the token's aud ----
-const GOOGLE_CLIENT_ID = String(env.GOOGLE_CLIENT_ID || '').trim();
+// Both can be overridden from the real environment (used by test-auth-token.js);
+// .env stays the normal source of truth for production runs.
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || env.GOOGLE_CLIENT_ID || '').trim();
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'https://oidc.net/https://accounts.google.com'];
-const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+const GOOGLE_JWKS_URL = String(process.env.JWKS_URL || env.JWKS_URL || '').trim() || 'https://www.googleapis.com/oauth2/v3/certs';
 let jwks = null; // built on first use: a dead Google endpoint must not kill the server
 
 // Returns the verified claims, or null when the token is forged/expired/mismatched.
@@ -26,12 +28,12 @@ async function verifyToken(idToken) {
   if (!GOOGLE_CLIENT_ID || !jose || typeof idToken !== 'string' || !idToken) return null;
   if (idToken.length > 4000 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(idToken)) return null;
   try {
-    if (!jwks) jwks = jose.createRemoteJWKSet(GOOGLE_JWKS_URL);
-    const {claims} = await jose.jwtVerify(idToken, jwks, {
+    if (!jwks) jwks = jose.createRemoteJWKSet(new URL(GOOGLE_JWKS_URL));
+    const {payload} = await jose.jwtVerify(idToken, jwks, {
       issuer: GOOGLE_ISSUERS, audience: GOOGLE_CLIENT_ID, clockTolerance: 60,
     });
-    if (!claims.sub) return null;
-    return claims;
+    if (!payload.sub) return null;
+    return payload;
   } catch (e) {
     console.log('[auth] token rejected: ' + (e.code || e.message || '?'));
     return null;

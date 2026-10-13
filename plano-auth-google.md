@@ -143,6 +143,14 @@ option de logout. se não, solicitar login."*
       so no "Confirmar & play" click is needed.
 - [x] F.6 Verified in browser at `http://localhost:8765/`: gate shows only the Google option (no name field),
       `node --check` clean.
+- [x] F.7 **COOP fix (GitHub Pages login was blocked):** the console showed
+      `Cross-Origin-Opener-Policy policy would block the window.postMessage call` — the GSI **button** returns
+      the credential to the page via a cross-frame `postMessage`, and Google's frame sets `COOP: same-origin`
+      while GitHub Pages cannot add a COOP header. Fix: load `gsi/client` with
+      `data-use_fedcm_for_prompt="true"` → One Tap uses the browser's **native FedCM credential API** (not
+      subject to COOP). After the fix the COOP error disappears on the live Pages origin; the only remaining
+      console line is `Not signed in with the identity provider.` = the browser profile has no Google session
+      (not a code fault). commit `4958a65`.
 
 **Acceptance:** with Google configured the player never types a name; signed-in state shows greeting + name +
 photo + logout; signed-out state shows a login option; the public board still shows **name only**.

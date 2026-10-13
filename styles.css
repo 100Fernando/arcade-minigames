@@ -904,6 +904,12 @@ body {
     vertical-align: middle;
 }
 .name-gate .google-login .gwt-off { opacity: 0.35; filter: grayscale(1); }
+/* Visible "Continue with Google" button (renderButton) inside the strip. */
+.name-gate .google-login .google-btn {
+    display: block;
+    margin: 6px auto 0;
+    text-align: center;
+}
 
 /* While the gate is pending, every game section (and its ranking block)
    is hidden, leaving only the name prompt visible. */

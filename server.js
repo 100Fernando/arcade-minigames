@@ -6,7 +6,14 @@ const fs = require('fs');
 const http = require('http');
 const mysql = require('mysql2');
 const dotenv = require('dotenv');
-const jose = require('jose');
+// jose v6 is an ES Module: node 18 (the VPS) cannot require() it, so it is loaded
+// lazily with dynamic import() — which works on every node >= 12 and on node 24 too.
+let jose = null; // resolved on first use; `false` = unavailable
+async function ensureJose() {
+  if (jose) return jose;
+  try { jose = await import('jose'); } catch (e) { jose = false; console.log('[auth] jose unavailable: ' + (e.code || e.message)); }
+  return jose;
+}
 
 const env = dotenv.parse(fs.readFileSync(new URL('.env', `file://${process.cwd()}/`)));
 const DB = {host: env.HOST, port: Number(env.PORT || 3306), user: env.USER, password: env.PASSWORD, database: env.DATABASE};
@@ -25,11 +32,13 @@ let jwks = null; // built on first use: a dead Google endpoint must not kill the
 
 // Returns the verified claims, or null when the token is forged/expired/mismatched.
 async function verifyToken(idToken) {
-  if (!GOOGLE_CLIENT_ID || !jose || typeof idToken !== 'string' || !idToken) return null;
+  if (!GOOGLE_CLIENT_ID || typeof idToken !== 'string' || !idToken) return null;
   if (idToken.length > 4000 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(idToken)) return null;
   try {
-    if (!jwks) jwks = jose.createRemoteJWKSet(new URL(GOOGLE_JWKS_URL));
-    const {payload} = await jose.jwtVerify(idToken, jwks, {
+    const j = await ensureJose();
+    if (!j) return null;
+    if (!jwks) jwks = j.createRemoteJWKSet(new URL(GOOGLE_JWKS_URL));
+    const {payload} = await j.jwtVerify(idToken, jwks, {
       issuer: GOOGLE_ISSUERS, audience: GOOGLE_CLIENT_ID, clockTolerance: 60,
     });
     if (!payload.sub) return null;

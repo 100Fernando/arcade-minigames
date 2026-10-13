@@ -60,7 +60,11 @@ Introduce a single **API base** the frontend uses, defaulting to same-origin so 
 
 ---
 
-## Phase 3 — Backend on VPS (nginx → node)  ⏳ READY TO RUN (one password, two prompts)
+## Phase 3 — Backend on VPS (nginx → node)  🟡 RUNNING (2026-10-12)
+
+**Gotcha found on the first run (fixed):** `node server.js --ensure-table` died with `ERR_REQUIRE_ESM` — **jose v6 is an ES Module and node 18 (the VPS) cannot `require()` it** (local node is **v24**, where `require()` of ESM works, which is why it never failed before). Fix in `server.js`: `let jose = null` + `ensureJose()` doing `await import('jose')` lazily (`false` = unavailable → `verifyToken` returns `null`). Verified locally: `node --check` clean and **`test-auth-token.js` 8/8 PASS** (`login: "google"`, forged→401, `/api/login`→uid 3, `/api/score`→`user_id: 3`, DB rows linked).
+
+**Second gotcha (test-side, not code):** running `node server.js` on :8765 in the background **before** `test-auth-token.js` makes the test's child server fail to bind the port → 6 false FAILs. Kill the background server first.
 
 Everything is scripted — **run `deploy\run-vps-deploy.ps1`** from this repo root. It does exactly two commands, so the root password is typed **twice** (once for `scp`, once for `ssh`) and never through the model:
 

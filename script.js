@@ -82,7 +82,14 @@
           const inp=document.getElementById('playerName');
           if(inp) inp.value=nm;
           window.pcName=()=>nm;
+          // Google already gave the identity: keep email+photo client-side too (never
+          // rendered on the public board) so the player never re-types anything.
           window.googleUser={uid:d.uid,name:d.name,email:d.email,picture:d.picture};
+          try{localStorage.setItem('googleEmail',d.email||'');localStorage.setItem('googlePicture',d.picture||'');}catch(_){}
+          // Auto-open the gate: the name came from Google, so reveal the games without
+          // the "Confirmar & play" click.
+          const card=document.querySelector('.card');
+          if(card) card.classList.remove('gate-pending');
           if(box) box.textContent='Signed in: '+nm;
         })
         .catch(()=>console.log('[login] /api/login unreachable — manual name kept'));

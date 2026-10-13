@@ -686,7 +686,7 @@
     const keysAk={left:false,right:false};
     let ak=null, raf=null, last=null;
     let akBest=0;try{akBest=Number(localStorage.getItem('akHighscore'))||0;}catch(_){}
-    const brickColor=br=>['#ff3366','#ffcc00','#00f2fe','#f093fb','#00ff88'][clamp((br.value-10)/5,0,4)];
+    const brickColor=br=>br.type==='armored'?'#8899aa':br.type==='explosive'?'#ff8800':br.type==='tough'?['#8b3fa8','#f093fb','#00f2fe'][clamp(br.maxHp-br.hp,0,2)]:['#ff3366','#ffcc00','#00f2fe','#f093fb','#00ff88'][clamp((br.value-10)/5,0,4)];
     // HUD created by script: Lives, Fase, Combo, Score/Recorde (like Alvos/SI).
     const akHud=document.createElement('div');
     akHud.id='akScoreDisplay';
@@ -701,15 +701,52 @@
       $('akPhase').textContent=ak.phase;
       $('akCombo').textContent='x'+(1+ak.combo);
     }
+    const COLS=10, BW=46, BH=22, GAP=4, X0=2, Y0=60;
+    const cellX=c=>X0+c*(BW+GAP), cellY=r=>Y0+r*(BH+GAP);
+    // Distinct silhouettes per phase (cycle after 12). Returns [row,col] cells.
+    function layoutFor(p){
+      const cells=[];
+      const add=(r,c)=>{if(r>=0&&r<6&&c>=0&&c<COLS)cells.push([r,c]);};
+      const idx=((p-1)%12)+1;
+      switch(idx){
+        case 1: for(let r=0;r<2;r++)for(let c=0;c<COLS;c++)add(r,c); break;
+        case 2: for(let r=0;r<5;r++)for(let c=r;c<COLS-r;c++)add(r,c); break; // pyramid
+        case 3: for(let c=0;c<COLS;c++){const r=Math.floor(Math.abs(c-4.5)/2);add(r,c);add(r+1,c);} break; // dome
+        case 4: for(let r=0;r<5;r++)for(let c=0;c<COLS;c++)if(c<3||c>6)add(r,c); break; // tunnel
+        case 5: for(let r=0;r<5;r++)for(let c=0;c<COLS;c++)if((r+c)%2===0)add(r,c); break; // checker
+        case 6: for(let r=0;r<5;r++)for(let c=0;c<COLS;c++)if(r===0||r===4||c===0||c===COLS-1)add(r,c); break; // fortress
+        case 7: for(let r=0;r<5;r++)for(let c=0;c<COLS;c++){const d=Math.min(c,COLS-1-c,r,4-r);if(d%2===0)add(r,c);} break; // spiral-ish
+        case 8: {const pat=['0110001100','1111111111','1011111101','0011001100'];for(let r=0;r<pat.length;r++)for(let c=0;c<COLS;c++)if(pat[r][c]==='1')add(r+1,c);} break; // invader
+        case 9: for(let r=0;r<5;r++)for(let c=0;c<COLS;c++)if(Math.abs(c-4.5)+Math.abs(r-2)<=4.5)add(r,c); break; // diamond
+        case 10: for(let r=0;r<5;r++){add(r,1);add(r,2);add(r,7);add(r,8);} break; // twin towers
+        case 11: for(let c=0;c<COLS;c++)add(c%5,c); break; // zigzag
+        default: for(let r=0;r<4;r++)for(let c=0;c<COLS;c++)add(r,c); break; // wall
+      }
+      return cells;
+    }
+    // Brick type by phase (tough/armored/moving/explosive appear progressively).
+    function brickTypeFor(r,c,p){
+      if(p>=6 && (r===0||r===5)) return 'armored';
+      if(p>=7 && (r+c)%7===0) return 'explosive';
+      if(p>=5 && c%3===0) return 'moving';
+      if(p>=3 && (r+c)%4===0) return 'tough';
+      return 'normal';
+    }
     function buildBricks(){
       ak.bricks=[];
-      const rows=Math.min(2+ak.phase,6),cols=10,bw=46,bh=22,gap=4;
-      for(let row=0;row<rows;row++)for(let col=0;col<cols;col++)
-        ak.bricks.push({x:2+col*(bw+gap),y:60+row*(bh+gap),w:bw,h:bh,hp:1,value:10+(rows-1-row)*5});
+      const cells=layoutFor(ak.phase);
+      for(const [r,c] of cells){
+        const type=brickTypeFor(r,c,ak.phase);
+        const hp=type==='armored'?4:type==='tough'?2:1;
+        const moving=type==='moving';
+        ak.bricks.push({x:cellX(c),y:cellY(r),w:BW,h:BH,hp,maxHp:hp,type,value:10+(5-r)*5,
+          vx:moving?(c%2?40:-40):0});
+      }
     }
+    function speedFor(p){return Math.min(620,300+p*24);}
     function reset(){
       ak={paddle:{x:(AW-PAD_W0)/2,w:PAD_W0},balls:[],bricks:[],particles:[],
-        lives:3,points:0,phase:1,combo:0,over:false,speed:320};
+        lives:3,points:0,phase:1,combo:0,over:false,speed:speedFor(1)};
       ak.balls=[{x:ak.paddle.x+ak.paddle.w/2,y:PAD_Y-7,r:7,stuck:true}];
       keysAk.left=keysAk.right=false;
       buildBricks();updateHUD();
@@ -728,21 +765,38 @@
       const dx=b.x-cx,dy=b.y-cy;return dx*dx+dy*dy<=b.r*b.r;
     }
     function hitBrick(br,b){
+      if(br.type==='armored'){ // ball bounces off armored; only laser breaks it
+        const cx=clamp(b.x,br.x,br.x+br.w),cy=clamp(b.y,br.y,br.y+br.h);
+        const dx=b.x-cx,dy=b.y-cy;
+        if(Math.abs(dx)>Math.abs(dy)){b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);b.x=dx>0?br.x+br.w+b.r:br.x-br.r;}
+        else{b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);b.y=dy>0?br.y+br.h+b.r:br.y-br.r;}
+        sfx('tough');return;
+      }
       br.hp--;
       if(br.hp<=0){
         ak.combo=Math.min(ak.combo+1,9);
         ak.points+=br.value*(1+ak.combo);
         burstAk(b.x,b.y,brickColor(br));
-        sfx('brick');
+        sfx(br.type==='explosive'?'brick':'brick');
+        if(br.type==='explosive')explodeBrick(br);
       }else sfx('tough');
       const cx=clamp(b.x,br.x,br.x+br.w),cy=clamp(b.y,br.y,br.y+br.h);
       const dx=b.x-cx,dy=b.y-cy;
-      if(Math.abs(dx)>Math.abs(dy)){b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);b.x=dx>0?br.x+br.w+b.r:br.x-b.r;}
-      else{b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);b.y=dy>0?br.y+br.h+b.r:br.y-b.r;}
+      if(Math.abs(dx)>Math.abs(dy)){b.vx=dx>0?Math.abs(b.vx):-Math.abs(b.vx);b.x=dx>0?br.x+br.w+b.r:br.x-br.r;}
+      else{b.vy=dy>0?Math.abs(b.vy):-Math.abs(b.vy);b.y=dy>0?br.y+br.h+b.r:br.y-br.r;}
+    }
+    // Explosive brick clears its 1-cell neighbourhood (AoE).
+    function explodeBrick(br){
+      const cx=br.x+br.w/2, cy=br.y+br.h/2;
+      burstAk(cx,cy,'#ff8800');
+      for(const o of ak.bricks)if(o!==br&&o.hp>0&&Math.abs((o.x+o.w/2)-cx)<BW+GAP+2&&Math.abs((o.y+o.h/2)-cy)<BH+GAP+2){
+        o.hp--;ak.points+=o.value;
+        if(o.hp<=0){burstAk(o.x+o.w/2,o.y+o.h/2,brickColor(o));if(o.type==='explosive')explodeBrick(o);}
+      }
     }
     function nextPhase(){
       ak.phase++;
-      ak.speed=Math.min(560,300+ak.phase*22);
+      ak.speed=speedFor(ak.phase);
       buildBricks();
       ak.balls=[{x:ak.paddle.x+ak.paddle.w/2,y:PAD_Y-7,r:7,stuck:true}];
       sfx('wave');updateHUD();
@@ -781,6 +835,8 @@
             ak.combo=0;sfx('bounce');
           }
           for(const br of ak.bricks)if(br.hp>0&&circleRect(b,br)){hitBrick(br,b);break;}
+      // Moving bricks drift and bounce off the side walls.
+      for(const br of ak.bricks)if(br.hp>0&&br.vx){br.x+=br.vx*dt;if(br.x<2||br.x+br.w>AW-2)br.vx*=-1;}
           if(b.y>AH+20){b.dead=true;break;}
         }
       }
@@ -798,6 +854,8 @@
       for(const br of ak.bricks)if(br.hp>0){
         ctx.fillStyle=brickColor(br);ctx.fillRect(br.x,br.y,br.w,br.h);
         ctx.fillStyle='rgba(255,255,255,.28)';ctx.fillRect(br.x+2,br.y+2,br.w-4,3);
+        if(br.type==='armored'){ctx.fillStyle='#dde';ctx.fillRect(br.x+6,br.y+6,br.w-12,br.h-12);}
+        if(br.type==='explosive'){ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(br.x+br.w/2,br.y+br.h/2,5,0,Math.PI*2);ctx.fill();}
       }
       ctx.shadowColor='#00f2fe';ctx.shadowBlur=14;
       const grd=ctx.createLinearGradient(ak.paddle.x,0,ak.paddle.x+ak.paddle.w,0);

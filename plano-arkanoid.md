@@ -4,7 +4,9 @@
 
 **Rule:** implement one phase at a time; update this file after each one. Never break the other two games.
 
-**Status:** 🟡 Phase 0 + Phase 1 complete (core engine verified in browser) — Phases 2-6 pending.
+**Status:** 🟡 Phase 0 + Phase 1 + **Phase 2** complete (layouts + brick types + speed ramp) — Phases 3-6 pending.
+
+> **Why it feels flat today:** only Phase 1 is live, so every phase is the same 10-column grid of 1-hit bricks, constant ball speed, no drops, no boss. The whole "challenge" is just clearing rows. The richness you want = Phases 2 (varied layouts + brick types + speed ramp), 3 (bosses), 4 (powerups). Elaborated below with concrete numbers so each is directly implementable.
 
 ---
 
@@ -40,42 +42,56 @@ Canvas 500×600, `raf`/`last` loop like SI. Reuse `clamp`, `rnd`.
 
 ## Phase 2 — Incredible phases (progressive layouts)
 
-`phaseFor`/`layoutFor(phase)` returns a pattern. Difficulty ramps: more rows, tougher bricks, faster ball.
+Replace the single `buildBricks()` grid with `buildBricks()` calling `layoutFor(phase)` that returns `[{x,y,w,h,hp,type}]`. Canvas 500 wide, brick cell `bw=46,bh=22,gap=4` → 10 cols, left margin 2.
 
-- [ ] 2.1 Layout generators (distinct silhouettes): pyramid, arch/dome, checkerboard, tunnel/corridor, fortress (hollow core), spiral, "invader" silhouette (homage to SI).
-- [ ] 2.2 Brick types by phase: normal (1 hit), **tough** (2–3 hits, color-shifts), **armored** (needs laser/2 hits, immune to side), **moving** (drifts horizontally, reuse SI `vx` idea).
-- [ ] 2.3 Ball speed ramps per phase (`speed = base + phase*k`, clamped).
-- [ ] 2.4 `nextPhase()`: rebuild layout, bump speed, `sfx('wave')`, update HUD.
-- [ ] 2.5 Cap phases (e.g., 12) then loop with speed multiplier (endless-ish), like Alvos caps at 12.
+- [x] 2.1 Layout generators (one per phase, cycle after 12). Concrete silhouettes on the 10×6 cell grid:
+  - P1 full rows (rows=2) · P2 **pyramid** (row r fills cols `[c0+r .. c9-r]`) · P3 **arch/dome** (top row arcs down at edges) · P4 **tunnel** (hollow center 4-wide corridor) · P5 **checkerboard** (alternate cells) · P6 **fortress** (hollow core, 2-wall thick) · P7 **spiral** · P8 **invader** (8×5 homage sprite) · P9 **diamond** · P10 **twin towers** · P11 **zigzag** · P12 **solid wall**.
+- [x] 2.2 **Brick types** (field `type` + `hp`), introduced progressively:
+  | type | hp | rule | appears from phase |
+  |------|----|------|--------------------|
+  | normal | 1 | one hit | 1 |
+  | tough | 2–3 | color-shifts each hit (`brickColor` by remaining hp) | 3 |
+  | armored | 4 | only laser/`bomb` breaks it; ball bounces off | 6 |
+  | moving | 1 | `vx=±40`, drifts, clamped to canvas (reuse SI `vx` idea) | 5 |
+  | explosive | 1 | on death, AoE clears 1-cell neighbours (`burstAk` + score) | 7 |
+- [x] 2.3 **Speed ramp:** `ak.speed = Math.min(620, 300 + phase*24)` (already `300+phase*22` — bump k and cap). Ball `r=7`.
+- [x] 2.4 `nextPhase()`: `phase++`, `buildBricks()` via `layoutFor(phase)`, speed bump, `sfx('wave')`, `updateHUD()`.
+- [x] 2.5 Cap at 12; after 12 loop `phase-12` with `speedMult` +15% each cycle (endless-ish, like Alvos cap 12).
 
-**Acceptance criteria:** each phase has a visibly different layout; tough/armored/moving bricks appear as phases progress; ball accelerates; clear → next phase.
+**Acceptance criteria:** 12 visibly different layouts; tough/armored/moving/explosive appear at the right phases; ball accelerates; clear → next phase.
 
 ---
 
 ## Phase 3 — Bosses (reuse `.boss-bar` HUD)
 
-Boss every 4th phase (4/8/12), like Alvos/SI.
+Boss every 4th phase (4/8/12), like Alvos/SI. Mirror SI `bossDefs` shape.
 
-- [ ] 3.1 `akBossDefs`: 3 bosses (name, w, h, colors, kind) — mirror SI `bossDefs` shape.
-- [ ] 3.2 Boss = a moving multi-HP entity patrolling above bricks; HP bar via existing `.boss-bar` (name + hp/maxHp + fill%).
-- [ ] 3.3 Boss attacks per `kind`: (a) drops projectiles the paddle must dodge, (b) spawns minion bricks, (c) shifts the whole layout / fires a sweeping laser telegraph (reuse SI `warning`/`laser` idea).
-- [ ] 3.4 Ball hits boss → `hp--`, `sfx('bossHit')`; boss defeated → big bonus + phase clear; boss projectile hits paddle → `loseLife`.
-- [ ] 3.5 Boss must be defeated to advance (locks the phase).
+- [ ] 3.1 `akBossDefs` (concrete):
+  | # | Boss (phase) | Size | Color | Movement | Attack |
+  |---|-------------|------|-------|----------|--------|
+  | 0 | **Guardian Neon** (4) | 120×46 | cyan | horizontal patrol `vx=90` | drops 3-ball fan of projectiles |
+  | 1 | **Warden Grid** (8) | 150×52 | magenta | patrol + sine `±28` | spawns 2 minion bricks per cycle |
+  | 2 | **Core Breaker** (12) | 140×64 | amber | vertical bob `±40` | telegraphed sweeping laser (reuse SI `warning`/`laser`) |
+- [ ] 3.2 `ak.boss={name,x,y,baseY,w,h,hp,maxHp,vx,kind,t}`; HP bar reuses the SI boss-bar DOM pattern (name + `hp/maxHp` fill%) — add an `akBossBar` like `bossBar` in the SI IIFE.
+- [ ] 3.3 Attacks per `kind` (cadence `Math.max(700,1600-tier*150)` ms): (0) 3 projectiles `vy=+240` aimed-ish; (1) spawn 2 moving bricks at edges; (2) `warning` telegraph 800ms then full-height `laser` (paddle must dodge).
+- [ ] 3.4 Ball hits boss → `hp--`, `sfx('bossHit')`, `burstAk`; boss down → `points += 500*(tier+1)` + `sfx('bossDown')` + phase clear. Boss projectile hits paddle → `loseLife()`.
+- [ ] 3.5 Phase locked until boss `hp<=0` (skip the "clear all bricks" win when `ak.boss` present).
 
-**Acceptance criteria:** boss appears at phase 4 with HP bar; attacks differ per kind; defeating it clears the phase; projectiles threaten the paddle.
+**Acceptance criteria:** boss at phase 4/8/12 with HP bar; 3 distinct attack patterns; defeating it clears the phase; projectiles threaten the paddle.
 
 ---
 
 ## Phase 4 — Powerups (falling capsules caught by paddle)
 
-Drop from destroyed bricks (prob ~0.12, cap concurrent like Alvos).
+Drop from destroyed bricks: `dropProb = 0.12` (phase-scaled up to 0.18), cap concurrent `ak.powerUps.length <= 3` (like Alvos). Capsule `{x,y,vy:170,type,age}`, `w=h=20`, paddle AABB overlap → apply + `sfx('power')`.
 
-- [ ] 4.1 Falling capsule `{x,y,type}`; paddle overlap → apply + `sfx('power')`.
-- [ ] 4.2 Types: **expand** (wider paddle), **multiball** (split into 3), **laser** (paddle shoots up for Ns, breaks armored), **sticky** (catch & relaunch), **slow** (ball speed ×0.7 for Ns), **x2** (score ×2 for Ns), **life** (+1, cap 5), **shield** (one free bounce below paddle).
-- [ ] 4.3 Timers decay in the loop (like SI `g.timers`); HUD shows active effects (reuse `tgEffects` pattern → `akEffects`).
-- [ ] 4.4 Bad powerups (rare): shrink paddle, speed-up — visual ⚠️ so player avoids.
+- [ ] 4.1 Falling capsule `{x,y,type}`; paddle overlap → apply + `sfx('power')`; expires at `y>AH` or `age>18000`.
+- [ ] 4.2 **Good powerups** (weights): expand (paddle `w=min(160,w+30)`, w2) · multiball (split each ball into 3, max 5 balls, w2) · laser (paddle fires 2 bolts up for 8s, breaks armored, w1) · sticky (catch & relaunch, 6s, w1) · slow (ball speed ×0.7 for 6s, w1) · x2 (score ×2 for 8s, w2) · life (+1, cap 5, w1) · shield (one free bounce below paddle, w1).
+- [ ] 4.3 **Bad powerups** (rare, ~0.05, drawn with ⚠️ so player avoids): shrink (`w=max(50,w-25)`) · speed-up (×1.25 for 6s).
+- [ ] 4.4 Timers in `ak.timers={laser,sticky,slow,x2,shield}` decay by `ms` in `update()` (like SI `g.timers`); HUD `akEffects` span shows active icons (🔥laser ⚡x2 🛡shield …).
+- [ ] 4.5 `laser` bolts: reuse SI bullet idea — 2 bolts `vy=-520` from paddle edges, break any brick incl armored, `sfx('laser')`.
 
-**Acceptance criteria:** capsules fall and are caught; each type visibly changes gameplay; timers expire; HUD lists active effects.
+**Acceptance criteria:** capsules fall and are caught; each type visibly changes gameplay; timers expire; HUD lists active effects; bad ones punish.
 
 ---
 

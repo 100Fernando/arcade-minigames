@@ -61,6 +61,12 @@
     window.googleCredential=null;
     const s=document.createElement('script');
     s.src='https://accounts.google.com/gsi/client'; s.async=true; s.defer=true;
+    // FedCM transport instead of the gsi iframe's cross-frame postMessage. GitHub
+    // Pages cannot send a Cross-Origin-Opener-Policy header, so the default
+    // button/One-Tap path is blocked ("Cross-Origin-Opener-Policy policy would
+    // block the window.postMessage call"). FedCM uses the browser's native
+    // credential API, which is not subject to COOP, so sign-in works on Pages.
+    s.setAttribute('data-use_fedcm_for_prompt','true');
     s.onerror=()=>console.log('[login] gsi client unavailable — manual name kept');
     document.head.appendChild(s);
     const show=(label)=>{

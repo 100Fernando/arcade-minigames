@@ -58,13 +58,11 @@ if ($env1 -match '(?m)^GOOGLE_CLIENT_ID\s*=') {
 Set-Content -Path .env -Value $env2 -NoNewline
 Write-Host ".env: GOOGLE_CLIENT_ID set (gitignored)"
 
-# 3) VPS .env + pm2 restart + prove the flip
-ssh $VPS "cd /opt/ranking-api && cp .env .env.pre-client; \
-  grep -q '^GOOGLE_CLIENT_ID' .env && sed -i 's|^GOOGLE_CLIENT_ID.*|GOOGLE_CLIENT_ID = $clientId|' .env || printf '\nGOOGLE_CLIENT_ID = %s\n' '$clientId' >> .env; \
-  chmod 600 .env; grep -n GOOGLE_CLIENT_ID .env; \
-  pm2 restart ranking-api; sleep 3; \
-  echo '--- upstream health ---'; curl -s http://127.0.0.1:8765/api/health; \
-  echo '--- public health ---'; curl -sk https://ferramox.duckdns.org/ranking-api/api/health"
+# 3) VPS .env + pm2 restart + prove the flip.
+# NOTE: keep the remote command on ONE line. PowerShell backtick line-continuation
+# inside a CRLF file leaves a literal \r in the string, which bash reports as
+# `$'\r': command not found` (harmless, but noisy).
+ssh $VPS "cd /opt/ranking-api && cp .env .env.pre-client; grep -q '^GOOGLE_CLIENT_ID' .env && sed -i 's|^GOOGLE_CLIENT_ID.*|GOOGLE_CLIENT_ID = $clientId|' .env || printf '\nGOOGLE_CLIENT_ID = %s\n' '$clientId' >> .env; chmod 600 .env; grep -n GOOGLE_CLIENT_ID .env; pm2 restart ranking-api; sleep 3; echo '--- upstream health ---'; curl -s http://127.0.0.1:8765/api/health; echo; echo '--- public health ---'; curl -sk https://ferramox.duckdns.org/ranking-api/api/health; echo"
 
 if ($push) {
   git add index.html

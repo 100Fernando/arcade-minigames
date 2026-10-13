@@ -167,22 +167,21 @@ user-side Google Cloud Console work, cannot be automated).
 - [x] 4.0 **Code side is 100% done and proven**: `test-auth-token.js` **9/9 PASS** (re-run 2026-10-13) —
       forged token → 401, `/api/login` → `uid`, `/api/score` → row with `user_id`, `google_users` row created.
       Fixture rows cleaned with `cleanup-test-rows.js`.
-- [ ] **4.1 Google Cloud Console — THE ONLY BLOCKER, cannot be automated** (the browser is not signed in,
-      and signing in / creating a project needs the user). Create project → **OAuth Client (Web)** →
-      Authorized JavaScript origins **must** include all three:
-      ```
-      https://100fernando.github.io     # Pages (One Tap origin check)
-      https://ferramox.duckdns.org      # the API origin the page also talks to
-      http://localhost:8765             # local dev
-      ```
-      No redirect URIs needed (ID-Token / One Tap flow).
-- [ ] 4.2 **One command does all the wiring** once the id exists:
-      `deploy\phase4.ps1 <client-id>` → sets `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID` in
-      local `.env` **and** `/opt/ranking-api/.env` on the VPS, `pm2 restart ranking-api`, then prints
-      `/api/health` which must flip `login: "off"` → `login: "google"`. Add `-push` to commit+push
-      `index.html` so Pages rebuilds. `deploy\phase4.ps1 -show` prints the current wiring state.
-      (`deploy\vps-setclient.ps1 <id>` = VPS half only; `-clear` = disable login again.)
-- [ ] 4.3 Live check: open the Pages URL → One Tap → submit a score → DB row has `user_id` + `game='arkanoid'`.
+- [x] **4.1 Google Cloud Console — DONE by the user 2026-10-13:** OAuth Client (Web) created, id
+      `609967125047-pq7398sgfk9nafqfmehoihg24f5f31vk.apps.googleusercontent.com`. **Proven real**:
+      `/o/oauth2/v2/auth` with it → `redirect_uri_mismatch`, while a fabricated id → `invalid_client`.
+      Authorized JavaScript origins registered include `https://100fernando.github.io` (proved by the
+      console message changing from `missing_client_id` to `Not signed in with the identity provider`).
+- [x] 4.2 **Wiring done:** `deploy\phase4.ps1 <id>` set `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID`
+      in local `.env` **and** `/opt/ranking-api/.env`, restarted pm2, and `/api/health` flipped
+      `login: "off"` → **`login: "google"`** (upstream AND public). Pushed; Pages rebuilt.
+- [x] 4.2b **Bug found + fixed (was blocking One Tap for everyone):** `script.js` called
+      `google.accounts.id.prompt()` **without `initialize()`** → GSI logged
+      `Missing required parameter: client_id.` and the card never rendered. Fixed with
+      `initialize({client_id: clientId})` before `prompt()` (commit `56f83bb`).
+- [ ] 4.3 Live check **with a browser profile signed in to Google** (this profile has none —
+      `Provider's accounts list is empty`): open Pages → One Tap card → submit a score →
+      DB row has `user_id` + `game='arkanoid'`.
 
 **Acceptance:** One Tap signs in from Pages; `/api/score` with a valid token stores `user_id`; forged token → 401.
 **Note:** the client id is **public by design** (Google ships it in HTML), so it is safe in `index.html`/git —

@@ -102,8 +102,11 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
       http://localhost:8765
       ```
       No "Authorized redirect URIs" are needed (One Tap / ID Token flow, no redirect).
-- [ ] E.2b **Then one command finishes the wiring:** `deploy\phase4.ps1 <client-id>` (add `-push` to also commit+push `index.html` so Pages rebuilds). It sets `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID` in local `.env` AND `/opt/ranking-api/.env` on the VPS, restarts pm2, and prints `/api/health` → must flip `login: "off"` → `login: "google"`.
-- [ ] E.3 Browser test: open the **Pages** URL (or `http://localhost:8765`) → One Tap → submit a score → confirm the DB row has `user_id` and `game='arkanoid'`.
+- [x] E.2b **DONE 2026-10-13:** `deploy\phase4.ps1 <id>` ran — `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID` in local `.env` + VPS `.env`, pm2 restarted, `/api/health` flipped `login: "off"` → **`login: "google"`** (upstream AND public).
+- [x] **E.2c BUG FOUND + FIXED (was blocking One Tap for everyone):** `script.js` called `google.accounts.id.prompt()` **without `initialize()`** → GSI logged `Missing required parameter: client_id.` and One Tap never rendered. Fix: `window.google.accounts.id.initialize({client_id: clientId})` before `prompt()` (commit `56f83bb`). `node --check` clean.
+- [x] E.2d **Client id validated as real + registered:** probing `/o/oauth2/v2/auth` with the id returns **`redirect_uri_mismatch`** (a *known* client), while a fabricated id returns **`invalid_client`**. So the id exists; only the origin list gates it.
+- [x] E.2e **Origin check, live from the Pages tab:** after the fix the console no longer says `missing_client_id`; it now says **`Not signed in with the identity provider.`** = the Pages origin **is** authorized and Google accepted the client. (On localhost the same flow reported `Provider's accounts list is empty` + `FedCM get() rejects with NetworkError` — the browser profile has no Google account signed in, so no card can render.)
+- [ ] E.3 Browser test with a **signed-in** browser profile: Pages → One Tap card → submit a score → DB row has `user_id` + `game='arkanoid'`.
 - [ ] E.4 `node --check` all JS; `get_errors` clean; commit + push; set Status 🟢.
 
 ---

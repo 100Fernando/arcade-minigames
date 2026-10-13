@@ -162,13 +162,31 @@ user-side Google Cloud Console work, cannot be automated).
 
 ---
 
-## Phase 4 — Google login wiring (optional path)
+## Phase 4 — Google login wiring (optional path)  🟡 BLOCKED on one user-side step (2026-10-13)
 
-- [ ] 4.1 Google Cloud Console: add **authorized origins** = Pages origin (`https://100Fernando.github.io`) **and** API origin (`https://ferramox.duckdns.org`).
-- [ ] 4.2 Fill the SAME `client_id` in BOTH `data-client-id` in `index.html` AND `GOOGLE_CLIENT_ID` in the VPS `.env` (server verifies `aud`).
-- [ ] 4.3 Re-run `test-auth-token.js` (8/8) and a live One-Tap check from the Pages origin.
+- [x] 4.0 **Code side is 100% done and proven**: `test-auth-token.js` **9/9 PASS** (re-run 2026-10-13) —
+      forged token → 401, `/api/login` → `uid`, `/api/score` → row with `user_id`, `google_users` row created.
+      Fixture rows cleaned with `cleanup-test-rows.js`.
+- [ ] **4.1 Google Cloud Console — THE ONLY BLOCKER, cannot be automated** (the browser is not signed in,
+      and signing in / creating a project needs the user). Create project → **OAuth Client (Web)** →
+      Authorized JavaScript origins **must** include all three:
+      ```
+      https://100fernando.github.io     # Pages (One Tap origin check)
+      https://ferramox.duckdns.org      # the API origin the page also talks to
+      http://localhost:8765             # local dev
+      ```
+      No redirect URIs needed (ID-Token / One Tap flow).
+- [ ] 4.2 **One command does all the wiring** once the id exists:
+      `deploy\phase4.ps1 <client-id>` → sets `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID` in
+      local `.env` **and** `/opt/ranking-api/.env` on the VPS, `pm2 restart ranking-api`, then prints
+      `/api/health` which must flip `login: "off"` → `login: "google"`. Add `-push` to commit+push
+      `index.html` so Pages rebuilds. `deploy\phase4.ps1 -show` prints the current wiring state.
+      (`deploy\vps-setclient.ps1 <id>` = VPS half only; `-clear` = disable login again.)
+- [ ] 4.3 Live check: open the Pages URL → One Tap → submit a score → DB row has `user_id` + `game='arkanoid'`.
 
 **Acceptance:** One Tap signs in from Pages; `/api/score` with a valid token stores `user_id`; forged token → 401.
+**Note:** the client id is **public by design** (Google ships it in HTML), so it is safe in `index.html`/git —
+but the **server must still verify `aud`**, which it does (`server.js:42`).
 
 ---
 

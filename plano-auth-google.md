@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each. Never break the 3 games.
 
-**Status:** � Phases A–C complete + **verified end-to-end by `test-auth-token.js` (8/8 PASS)** — DB reconciled, browser One Tap wired, server JWKS verify works, `/api/score` 401s without a valid token, valid token links `ranking.user_id`. Login is **code-complete and proven**; only the **user-side config** remains (Phase E.2: create the Google Cloud Console Web OAuth client and fill the SAME id in BOTH `data-client-id` in `index.html` AND `GOOGLE_CLIENT_ID` in `.env`). Phase D done by design (name only).
+**Status:** ✅ Phases A–D complete + **verified end-to-end by `test-auth-token.js` (9/9 PASS, re-run 2026-10-13)** — DB reconciled, browser One Tap wired, server JWKS verify works, `/api/score` 401s without a valid token, valid token links `ranking.user_id`. Login is **code-complete and proven**. **E.2 is the only blocker left and it is user-side** (Google Cloud Console: create the OAuth Client (Web) + set Authorized JavaScript origins). Everything around it is now scripted: **`deploy\phase4.ps1 <client-id>`** fills the id in all THREE places at once (`index.html` `data-client-id`, local `.env`, VPS `/opt/ranking-api/.env` + `pm2 restart` + proves `login: "google"`), and `deploy\phase4.ps1 -show` prints the current wiring. `deploy\vps-setclient.ps1` does the VPS half alone.
 
 **Phase A result (verified on live DB):**
 - New table **`google_users`** created: `id · google_sub varchar(255) UNIQUE · name varchar(32) · email varchar(128) · picture varchar(512) · hd varchar(64) · locale varchar(16) · created_at · last_login`.
@@ -93,10 +93,17 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 ## Phase E — Playtest + commit
 
-- [x] E.0 `test-auth-token.js` (added): mints a local RSA JWK + local JWKS, spawns the real `server.js` with `GOOGLE_CLIENT_ID`/`JWKS_URL` env overrides, and drives the **valid-token path end to end** — 8 checks PASS (forged→401, `/api/login`→uid, `/api/score`→`user_id` link, DB cleanup). Proves the code works without a real Google client.
+- [x] E.0 `test-auth-token.js` (added): mints a local RSA JWK + local JWKS, spawns the real `server.js` with `GOOGLE_CLIENT_ID`/`JWKS_URL` env overrides, and drives the **valid-token path end to end** — 8 checks PASS (forged→401, `/api/login`→uid, `/api/score`→`user_id` link, DB cleanup). Proves the code works without a real Google client. **Re-run 2026-10-13: 9/9 PASS** (fixture rows cleaned by `cleanup-test-rows.js` afterwards).
 - [ ] E.1 Must run via `node server.js` at `http://localhost:8765` (Google login **won't work on `file://`**).
-- [ ] E.2 Create a Google Cloud Console project → OAuth Client (Web) → allowed origin `http://localhost:8765` → copy `client_id` to `.env`.
-- [ ] E.3 Browser test: One Tap → login → submit a score → confirm DB row has `user_id` and `game='arkanoid'`.
+- [ ] **E.2 — THE ONLY BLOCKER (user-side, cannot be automated):** create a Google Cloud Console project → **OAuth Client (Web)** → copy `client_id`. The client MUST list these **Authorized JavaScript origins** (One Tap is origin-checked):
+      ```
+      https://100fernando.github.io
+      https://ferramox.duckdns.org
+      http://localhost:8765
+      ```
+      No "Authorized redirect URIs" are needed (One Tap / ID Token flow, no redirect).
+- [ ] E.2b **Then one command finishes the wiring:** `deploy\phase4.ps1 <client-id>` (add `-push` to also commit+push `index.html` so Pages rebuilds). It sets `data-client-id` in `index.html`, `GOOGLE_CLIENT_ID` in local `.env` AND `/opt/ranking-api/.env` on the VPS, restarts pm2, and prints `/api/health` → must flip `login: "off"` → `login: "google"`.
+- [ ] E.3 Browser test: open the **Pages** URL (or `http://localhost:8765`) → One Tap → submit a score → confirm the DB row has `user_id` and `game='arkanoid'`.
 - [ ] E.4 `node --check` all JS; `get_errors` clean; commit + push; set Status 🟢.
 
 ---

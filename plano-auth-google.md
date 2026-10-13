@@ -75,6 +75,12 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 - [x] C.1 Dep `jose` (^6.2.12) added to `package.json` — pure JS, verifies against Google JWKS. No native modules.
 - [x] C.2 `POST /api/login`: `jose.createRemoteJWKSet('https://www.googleapis.com/oauth2/v3/certs')` + `jwtVerify` with `issuer ∈ {accounts.google.com, oidc.net/…}`, `aud == GOOGLE_CLIENT_ID`, `clockTolerance: 60`. Built lazily so a dead Google endpoint never kills the server.
+      - **GOTCHA (Node 18 + jose):** on the VPS (Node 18.19.1) `/api/login` returned **401 `bad token`** and the
+        pm2 log said **`[auth] token rejected: crypto is not defined`**. jose v6 calls `globalThis.crypto`
+        (Web Crypto), which Node 18 does NOT define (added in Node 19). FIX: at the top of `server.js`,
+        `if(!globalThis.crypto){ globalThis.crypto = require('node:crypto').webcrypto; }` (`node:crypto.webcrypto`
+        exists since Node 17/18). commit `9d35e0e`. VPS `server.js` lives at `/opt/ranking-api/server.js`
+        (pm2 `ranking-api`); redeploy = `scp` + `sed` CRLF + `pm2 restart ranking-api`.
 - [x] C.3 On valid: `SELECT`/`INSERT`/`UPDATE google_users` by `google_sub` (updates `last_login`), returns `{ok, uid, name, email, picture}`.
 - [x] C.4 `POST /api/score`: verifies `body.token` first → resolves `user_id` → `INSERT ranking (player_name, game, score, user_id)`. Forged/absent token → **401 `login required`** (verified live: `{"error":"login required"} HTTP 401`).
 - [x] C.5 `board()` returns `name` + `uid` only — **no JOIN needed**: the verified Google name is written into `player_name` at insert time, so email/photo are never read for display. (Deviation from the plan's JOIN: simpler, and old manual rows keep their stored name.)

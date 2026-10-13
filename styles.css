@@ -910,8 +910,10 @@ body {
     margin: 6px auto 0;
     text-align: center;
 }
-/* Once signed in, the login button is replaced by the profile block below. */
+/* Once signed in, the whole login strip collapses: the profile block below takes over. */
 .name-gate .google-login.signedin .google-btn { display: none; }
+.name-gate .google-login.signedin #googleOneTap { display: none; }
+.name-gate .google-login.signedin { display: none; }
 
 /* When Google login is configured, the manual name field is not needed:
    identity comes from Google. Hidden via the enabled strip's siblings. */
@@ -920,7 +922,16 @@ body {
 
 /* Signed-in Google profile: avatar + greeting + logout. Hidden until filled. */
 .name-gate .google-profile { display: none; }
-.name-gate .google-profile.on { display: block; }
+.name-gate .google-profile.on {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 20px;
+    border-radius: 14px;
+    background: rgba(36, 36, 62, 0.55);
+    border: 1px solid rgba(102, 126, 234, 0.45);
+}
 .name-gate .google-profile .google-avatar {
     display: block;
     width: 56px; height: 56px;
@@ -949,6 +960,10 @@ body {
    is hidden, leaving only the name prompt visible. */
 .card.gate-pending .game-section { display: none; }
 .card.gate-pending .name-gate { display: flex; }
+
+/* Signed in with Google: the profile card (photo + greeting + logout) is taller
+   than the gate alone, so let the card grow instead of scrolling inside it. */
+.card.google-signedin { max-height: none; overflow: visible; }
 
 /* When a game is open, collapse the top chrome (greeting, icon, divider,
    subtitle, name gate) and let the card grow instead of scrolling internally.

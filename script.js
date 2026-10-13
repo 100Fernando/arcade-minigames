@@ -99,9 +99,10 @@
             }
           }
           // Auto-open the gate: the name came from Google, so reveal the games without
-          // the "Confirmar & play" click.
+          // the "Confirmar & play" click. The card also grows instead of scrolling
+          // internally, so the profile card is never clipped at its bottom edge.
           const card=document.querySelector('.card');
-          if(card) card.classList.remove('gate-pending');
+          if(card){card.classList.remove('gate-pending');card.classList.add('google-signedin');}
         })
         .catch(()=>console.log('[login] /api/login unreachable — manual name kept'));
     };
@@ -139,6 +140,8 @@
         window.googleCredential=null; window.googleUser=null;
         try{localStorage.removeItem('playerName');localStorage.removeItem('googleEmail');localStorage.removeItem('googlePicture');}catch(_){}
         if(box) box.classList.remove('signedin');
+        const card=document.querySelector('.card');
+        if(card) card.classList.remove('google-signedin');
         const prof=document.getElementById('googleProfile');
         if(prof){prof.classList.remove('on');const av=document.getElementById('googleAvatar');if(av)av.removeAttribute('src');const gr=document.getElementById('googleGreeting');if(gr)gr.textContent='';}
         // Re-arm One Tap + the button for a fresh sign-in.

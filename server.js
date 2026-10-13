@@ -275,6 +275,16 @@ function mpHandle(path, req, rq, body, qs) {
   if (path === '/api/mp/state') {
     const room = findRoom(qs.code);
     if (!room) return json(rq, { error: 'room not found' }, 404);
+    // The client can ride its input on this GET (?seat=&mx=&my=&fire=). A GET with no
+    // body and no custom headers is a "simple" CORS request, so the browser never
+    // fires an OPTIONS preflight — one round trip per poll instead of two. That is
+    // what makes the match playable from Brazil on a server in France.
+    if (qs.seat !== undefined && (qs.mx !== undefined || qs.my !== undefined || qs.fire !== undefined)) {
+      const seat = Number(qs.seat);
+      if (Number.isInteger(seat) && seat >= 0 && seat < room.world.players.length) {
+        SiSim.applyInput(room.world, seat, qs.mx, qs.my, qs.fire !== undefined && qs.fire !== '0' && qs.fire !== '');
+      }
+    }
     touch(room.world);
     rq.writeHead(200, {
       'Content-Type': 'application/json; charset=utf-8',

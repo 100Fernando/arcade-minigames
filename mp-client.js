@@ -81,9 +81,19 @@
 
   // ---------------------------------------------------------------- state
   let myCode = null, mySeat = -1, myName = '';
-  let snap = null, lastTick = -1, connLost = false;
+  let snap = null, prevSnap = null, snapAt = 0, lastTick = -1, lastStatus = '', connLost = false;
   let pollTimer = null, lobbyTimer = null, startedAt = 0;
   let running = false;
+
+  // A round trip to the VPS costs ~140 ms (the box lives in France, the player in
+  // Brazil). The old loop paid that latency SEQUENTIALLY (await, then sleep 250 ms),
+  // which capped the whole game at ~2.5 fps. Two changes, both invisible to the sim:
+  //   1. polls are scheduled START-TO-START, so the request latency overlaps the next
+  //      poll instead of adding to it -> the poll rate is 1/latency, not 1/(latency+250);
+  //   2. the input rides on the state GET as query params, so one SIMPLE request per
+  //      poll (a GET with no custom headers never triggers a CORS preflight, which
+  //      used to double every input round trip).
+  const POLL_MS = 120;
 
   const nameOf = () => {
     const inp = document.getElementById('playerName');
@@ -264,29 +274,26 @@
   }
 
   // ---------------------------------------------------------------- loop
-  let lastSent = 0;
   async function tick() {
     if (!myCode) return;
-    const s = await getJson('/api/mp/state?code=' + encodeURIComponent(myCode));
+    // Input travels ON the state request: the server applies it and answers with the
+    // snapshot in one round trip. A GET with no body and no custom headers is a
+    // "simple" CORS request, so the browser never sends an OPTIONS preflight here.
+    const inp = currentInput();
+    const s = await getJson('/api/mp/state?code=' + encodeURIComponent(myCode)
+      + '&seat=' + mySeat + '&mx=' + inp.mx + '&my=' + inp.my + '&fire=' + (inp.fire ? 1 : 0));
     if (!s) {
       if (snap) connLost = true;             // keep the last frame, say so
       return;
     }
     connLost = false;
-    snap = s;
-    if (s.t !== lastTick) lastTick = s.t;
+    prevSnap = snap; snap = s; snapAt = Date.now();
+    if (s.t !== lastTick || s.st !== lastStatus) { lastTick = s.t; lastStatus = s.st; drawHud(s); }
 
     // Auto-start: the host opens the match once 4 seats are in, or after 20 s.
     if (s.st === 'waiting' && mySeat === 0) {
       const seats = (s.ps || []).length;
       if (seats >= 4 || Date.now() - startedAt > 20000) doStart();
-    }
-
-    // Send input at most every 100 ms — four phones stay far below the VPS budget.
-    if (s.st === 'live' && Date.now() - lastSent > 100) {
-      lastSent = Date.now();
-      const inp = currentInput();
-      postJson('/api/mp/input', { code: myCode, seat: mySeat, mx: inp.mx, my: inp.my, fire: inp.fire });
     }
 
     if (s.st === 'over') endMatch(s);
@@ -300,13 +307,27 @@
   function startLoop() {
     if (pollTimer) return;
     running = true;
+    // Start-to-start scheduling: a 140 ms request inside a 120 ms slot costs ZERO extra
+    // delay, so the poll rate tracks the network instead of paying for it twice.
+    let next = Date.now();
     const step = async () => {
       if (!running) return;
       await tick();
-      draw();
-      pollTimer = setTimeout(step, 250);
+      next += POLL_MS;
+      const now = Date.now();
+      if (next < now) next = now;            // a slow request skips, it never drifts
+      pollTimer = setTimeout(step, next - now);
     };
     step();
+    // Rendering is decoupled from polling: the canvas repaints at the display refresh
+    // rate, interpolating between the last two snapshots. 20 Hz sim + 8 Hz poll still
+    // looks like a 60 fps game.
+    const frame = () => {
+      if (!running) return;
+      drawFrame();
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   }
   function stopLoop() {
     running = false;
@@ -321,7 +342,7 @@
     total.className = 'mp-seat';
     total.textContent = 'TEAM ' + (s.total || 0) + ' · fase ' + s.lv;
     hud.appendChild(total);
-    for (const p of s.ps) {
+    for (const p of (s.ps || [])) {
       const el = document.createElement('span');
       el.className = 'mp-seat';
       el.style.color = p[8];
@@ -341,17 +362,16 @@
   const PU_COLOR = { speed: '#0088ff', multishot: '#ff8800', bomb: '#ffff00', shield: '#00ff88', rapidfire: '#ffffaa' };
   const PU_GLYPH = { speed: '⚡', multishot: '🔥', bomb: '💣', shield: 'S', rapidfire: 'R' };
 
-  function draw() {
+  function draw(s) {
     ctx.fillStyle = '#101329';
     ctx.fillRect(0, 0, CW, CH);
-    if (!snap) {
+    if (!s) {
       ctx.fillStyle = '#5a6bb8';
       ctx.font = '16px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('Create or join a match to start', CW / 2, CH / 2);
       return;
     }
-    const s = snap;
     for (let i = 0; i < 35; i++) { ctx.fillStyle = '#283452'; ctx.fillRect((i * 97) % CW, (i * 137) % CH, 2, 2); }
 
     if (s.wr >= 0) {
@@ -429,7 +449,6 @@
     }
 
     if (msgTimer > 0) {
-      msgTimer -= 250;
       ctx.fillStyle = '#ffe35a'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(msgText, CW / 2, 22);
     }
@@ -437,7 +456,62 @@
       ctx.fillStyle = '#ff5566'; ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('connection lost — retrying', CW / 2, CH - 20);
     }
-    drawHud(s);
+  }
+
+  // ---------------------------------------------------------------- smooth render
+  // Snapshots only change every server tick (20 Hz) and arrive every poll (~140 ms),
+  // so drawing them raw would crawl at 2-3 fps. Instead every frame blends the
+  // previous snapshot into the current one, which keeps motion continuous at the
+  // display refresh rate whatever the network is doing. Entities are matched by index
+  // (the sim keeps them in order); a big jump or a type change means "not the same
+  // thing", so that row is drawn as-is instead of streaking across the screen.
+  function lerpSnap(a, b, t) {
+    if (!a || !b) return b;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const rows = (prev, cur, xi, yi, maxd, ki) => {
+      const out = [];
+      for (let i = 0; i < cur.length; i++) {
+        const q = cur[i].slice();
+        const o = prev && prev[i];
+        if (o && (ki < 0 || o[ki] === q[ki])) {
+          const dx = q[xi] - o[xi], dy = q[yi] - o[yi];
+          if (Math.abs(dx) <= maxd && Math.abs(dy) <= maxd) {
+            q[xi] = o[xi] + dx * t;
+            q[yi] = o[yi] + dy * t;
+          }
+        }
+        out.push(q);
+      }
+      return out;
+    };
+    const one = (p, c, maxd) => (p == null || c == null || Math.abs(c - p) > maxd) ? c : p + (c - p) * t;
+    let boss = b.b;
+    if (a.b && b.b && a.b[7] === b.b[7] && Math.abs(b.b[1] - a.b[1]) < 60 && Math.abs(b.b[2] - a.b[2]) < 60) {
+      boss = b.b.slice();
+      boss[1] = a.b[1] + (b.b[1] - a.b[1]) * t;
+      boss[2] = a.b[2] + (b.b[2] - a.b[2]) * t;
+    }
+    return {
+      ...b,
+      ps: rows(a.ps, b.ps, 2, 3, 60, 0),      // [seat,name,x,y,...] — seat is the key
+      en: rows(a.en, b.en, 0, 1, 40, 2),      // [x,y,type,hp]
+      bl: rows(a.bl, b.bl, 0, 1, 90, -1),     // player bullets travel far per poll
+      eb: rows(a.eb, b.eb, 0, 1, 90, -1),
+      pu: rows(a.pu, b.pu, 0, 1, 30, 2),      // [x,y,type]
+      pa: rows(a.pa, b.pa, 0, 1, 60, -1),
+      wr: one(a.wr, b.wr, 60),
+      la: one(a.la, b.la, 60),
+      b: boss,
+    };
+  }
+
+  let lastFrame = 0;
+  function drawFrame() {
+    const now = Date.now();
+    if (msgTimer > 0) msgTimer -= lastFrame ? now - lastFrame : 0;
+    lastFrame = now;
+    const t = prevSnap && snap ? (now - snapAt) / POLL_MS : 0;
+    draw(t > 0 ? lerpSnap(prevSnap, snap, t) : snap);
   }
 
   function endMatch(s) {
@@ -466,7 +540,7 @@
       overlay.style.display = 'flex';
       mpStart.style.display = '';
       mpRestart.style.display = '';
-      draw();
+      drawFrame();
       return;
     }
     startLoop();

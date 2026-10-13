@@ -910,6 +910,40 @@ body {
     margin: 6px auto 0;
     text-align: center;
 }
+/* Once signed in, the login button is replaced by the profile block below. */
+.name-gate .google-login.signedin .google-btn { display: none; }
+
+/* When Google login is configured, the manual name field is not needed:
+   identity comes from Google. Hidden via the enabled strip's siblings. */
+.name-gate .google-login.enabled ~ label { display: none; }
+.name-gate .google-login.enabled ~ button#confirmNameBtn { display: none; }
+
+/* Signed-in Google profile: avatar + greeting + logout. Hidden until filled. */
+.name-gate .google-profile { display: none; }
+.name-gate .google-profile.on { display: block; }
+.name-gate .google-profile .google-avatar {
+    display: block;
+    width: 56px; height: 56px;
+    margin: 0 auto 8px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #667eea;
+    box-shadow: 0 3px 12px rgba(102,126,234,0.5);
+}
+.name-gate .google-profile #googleGreeting {
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+.name-gate .google-profile #googleLogoutBtn {
+    margin: 4px auto 0;
+    padding: 8px 20px;
+    font-size: 13px;
+    background: #24243e;
+    border: 1px solid #667eea;
+    border-radius: 8px;
+    cursor: pointer;
+}
 
 /* While the gate is pending, every game section (and its ranking block)
    is hidden, leaving only the name prompt visible. */

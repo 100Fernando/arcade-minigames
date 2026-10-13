@@ -86,11 +86,22 @@
           // rendered on the public board) so the player never re-types anything.
           window.googleUser={uid:d.uid,name:d.name,email:d.email,picture:d.picture};
           try{localStorage.setItem('googleEmail',d.email||'');localStorage.setItem('googlePicture',d.picture||'');}catch(_){}
+          // Signed-in UI: greeting + name + photo + logout, and hide the login button.
+          if(box){
+            box.classList.add('signedin');
+            const prof=document.getElementById('googleProfile');
+            if(prof){
+              prof.classList.add('on');
+              const av=document.getElementById('googleAvatar');
+              if(av&&d.picture) av.src=d.picture;
+              const gr=document.getElementById('googleGreeting');
+              if(gr) gr.textContent='Hello, '+nm+'!';
+            }
+          }
           // Auto-open the gate: the name came from Google, so reveal the games without
           // the "Confirmar & play" click.
           const card=document.querySelector('.card');
           if(card) card.classList.remove('gate-pending');
-          if(box) box.textContent='Signed in: '+nm;
         })
         .catch(()=>console.log('[login] /api/login unreachable — manual name kept'));
     };
@@ -113,6 +124,27 @@
         window.google.accounts.id.prompt(onCredential);
       }catch(e){console.log('[login] One Tap unavailable — manual name kept');}
     };
+    // Logout: revoke the Google session, clear the captured identity, hide the
+    // profile block and bring the login button back so the player can sign in again.
+    (()=>{
+      const btn=document.getElementById('googleLogoutBtn');
+      if(!btn) return;
+      btn.addEventListener('click',()=>{
+        try{
+          if(window.google&&window.google.accounts){
+            window.google.accounts.id.disableAutoSelect();
+            window.google.accounts.id.revoke(window.googleUser&&window.googleUser.email||'');
+          }
+        }catch(_){}
+        window.googleCredential=null; window.googleUser=null;
+        try{localStorage.removeItem('playerName');localStorage.removeItem('googleEmail');localStorage.removeItem('googlePicture');}catch(_){}
+        if(box) box.classList.remove('signedin');
+        const prof=document.getElementById('googleProfile');
+        if(prof){prof.classList.remove('on');const av=document.getElementById('googleAvatar');if(av)av.removeAttribute('src');const gr=document.getElementById('googleGreeting');if(gr)gr.textContent='';}
+        // Re-arm One Tap + the button for a fresh sign-in.
+        if(window.google){try{window.google.accounts.id.prompt(onCredential);}catch(_){}}
+      });
+    })();
     if(window.google) boot();
     else window.addEventListener('load',boot);
   })();

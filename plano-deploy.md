@@ -47,34 +47,41 @@ Introduce a single **API base** the frontend uses, defaulting to same-origin so 
 
 ---
 
-## Phase 2 — GitHub Pages deploy (frontend only)  🟡 PARTIAL (push done, Pages enablement blocked)
+## Phase 2 — GitHub Pages deploy (frontend only)  ✅ DONE (2026-10-12)
 
 - [x] 2.1 `.gitignore` verified: `.env` ignored (line 14), `node_modules/` ignored, `auth-test.log` + `diff_alvos.txt` (stray diff artifact) ignored. `git ls-files` shows only `.env.example` (no secrets) and `server.js` — safe to publish.
 - [x] 2.2 `server.js` stays in the repo as **backend source only**; Pages serves the static files and never runs it.
-- [x] 2.3 Pushed: `9805c66..366c283 main -> main`. Verified public: `https://raw.githubusercontent.com/100Fernando/arcade-minigames/main/index.html` → 200 and contains `<meta id="apiBase" content="https://ferramox.duckdns.org/ranking-api">`.
-- [ ] 2.4 **BLOCKED — needs the user:** Pages is **not enabled** (`https://100Fernando.github.io/arcade-minigames/` → 404, and `/ranking.js` → 404). No `gh` CLI on this machine and the browser is **not signed into GitHub** (settings page → 404 logged-out). One click in the repo's *Settings → Pages* (source: **branch `main`, root `/`**) unblocks it. Nothing else is missing.
+- [x] 2.3 Pushed: `9805c66..b41e059 main -> main`. Verified public: `https://raw.githubusercontent.com/100Fernando/arcade-minigames/main/index.html` → 200 and contains `<meta id="apiBase" content="https://ferramox.duckdns.org/ranking-api">`.
+- [x] 2.4 **Pages enabled by the user** (Settings → Pages, "Deploy from a branch", **`main` / root `/`**, Enforce HTTPS on). Banner read: *"GitHub Pages source saved."*
 
 **Note on the commit:** the uncommitted Arkanoid audio work (`audio.js` `window.akSfx` + phase soundtrack, `plano-arkanoid.md` 0.5 / 5.1–5.4) was **verified live first** (icon opens the section, `#akCanvas` + `#akScoreDisplay` HUD render, `window.akSfx` has 12 keys) and then committed together with Phase 1 — so the published frontend is the complete 3-game build, audio included.
 
+**⏳ First build:** the Pages site takes a couple of minutes to compile after saving. `https://100fernando.github.io/arcade-minigames/` still returned **404** at the moment of writing — re-check before declaring it live (the raw-URL check above already proves the content is pushed).
+
 ---
 
-## Phase 3 — Backend on VPS (nginx → node)  ⏸ HANDOFF (needs SSH password typed by the user)
+## Phase 3 — Backend on VPS (nginx → node)  ⏳ READY TO RUN (one password, two prompts)
 
-Every SSH call to `root@51.79.39.178` prompts for the root password — it must be typed **directly in the terminal** (never through the model). To keep it to ONE password, open an interactive session once and run the steps in order:
+Everything is scripted — **run `deploy\run-vps-deploy.ps1`** from this repo root. It does exactly two commands, so the root password is typed **twice** (once for `scp`, once for `ssh`) and never through the model:
 
 ```powershell
-ssh root@51.79.39.178        # type the password once, then run everything inside
+deploy\run-vps-deploy.ps1                                   # interactive certbot (asks for email/consent)
+CERTBOT_EMAIL=you@example.com deploy\run-vps-deploy.ps1     # fully non-interactive certbot
 ```
 
-Inside the VPS shell, in this order (3.5 **before** 3.6 — certbot needs nginx listening first):
+What `deploy/vps-setup.sh` does on the VPS (idempotent, `set -e`, restores the nginx backup if `nginx -t` rejects the edit):
 
-1. `scp server.js bootstrap.sql package.json deploy/nginx-api.conf root@51.79.39.178:/opt/ranking-api/` (then `npm install dotenv mysql2 jose` there) + write `/opt/ranking-api/.env` with the same keys as the local `.env`.
-2. `node server.js --ensure-table` → reconciles `google_users` + `ranking` (idempotent).
-3. `pm2 start server.js --name ranking-api` → node listens on `127.0.0.1:8765` (set `--max-old-space-size` if needed; keep `PORT=8765`).
-4. Paste the **prepared snippet** `deploy/nginx-api.conf` into `sites-enabled/frontend` **before** its `location /api/` (note the `proxy_pass http://127.0.0.1:8765/;` — bare `/`, since the browser already sends `/ranking-api/api/...`) → **first run `nginx -T | grep -n location`** to confirm the existing block has only prefix locations (a regex `location` like `location ~ ^/api` would win over our prefix and must be handled) → `nginx -t` → `systemctl restart nginx`.
-5. `apt-get install certbot` (missing, found in 0.4) → `certbot --certonly --webroot -w /var/www/html -d ferramox.duckdns.org` → point nginx at the cert so HTTPS answers.
+1. **3.1/3.2** stage `server.js` + `bootstrap.sql` + `package.json` + `.env` into `/opt/ranking-api` (`chmod 600` on `.env`, then `shred -u` the staged copy in `/tmp`), `npm install dotenv mysql2 jose`.
+2. **3.3** `node server.js --ensure-table` → reconciles `google_users` + `ranking`.
+3. **3.4** `pm2 start server.js --name ranking-api` + `pm2 save`; curls `http://127.0.0.1:8765/api/health` directly.
+4. **certbot first** (it needs nginx answering): installs `certbot` via apt (missing, found in 0.4), inserts a `location /.well-known/acme-challenge/` served from `/var/www/certbot` (the wedding app is proxied, so its own webroot cannot serve the challenge), `nginx -t` + restart, then `certbot certonly --webroot -w /var/www/certbot -d ferramox.duckdns.org`.
+5. **3.5** inserts `location /ranking-api/ { proxy_pass http://127.0.0.1:8765/; ... }` **and** `listen 443 ssl` + cert paths into the **existing** `sites-enabled/frontend` block (never a competing block), forwarding `X-Forwarded-For` for `tooFast(ip)`. Prints `nginx -T | grep location` so any **regex** `location` that could win over our prefix is visible.
 
-**Acceptance:** `curl https://ferramox.duckdns.org/ranking-api/api/health` → `{"ok":true,...}` **and** `curl http://ferramox.duckdns.org/` still returns the wedding page (regression check — the wedding app's own `/api/*` must stay intact).
+**Acceptance (script prints all four):**
+- `curl -sk https://ferramox.duckdns.org/ranking-api/api/health` → `{"ok":true,"db":"estudo","table":"ranking","login":"off"}`
+- `curl -s http://ferramox.duckdns.org/` → still the wedding page (**regression**)
+- `curl -s -o /dev/null -w "%{http_code}" http://ferramox.duckdns.org/api/x` → still `401` from the wedding app (**regression**)
+- `nginx -t` clean; on failure the script restores `frontend.bak2` and exits 1.
 
 ---
 
@@ -107,6 +114,8 @@ Inside the VPS shell, in this order (3.5 **before** 3.6 — certbot needs nginx 
 | `script.js` | absolute API base for `/api/login` (One Tap) |
 | VPS `server.js` | unchanged (already CORS + OPTIONS) |
 | VPS nginx | new: `location /ranking-api/` proxy → node (added to the existing `frontend` block), HTTPS via certbot |
-| `deploy/nginx-api.conf` | **new**: the ready-to-paste nginx `location` block for 3.5 (kept in-repo so the VPS edit is one copy/paste) |
+| `deploy/nginx-api.conf` | **new**: the ready-to-paste nginx `location` block for 3.5 (reference copy) |
+| `deploy/vps-setup.sh` | **new**: the whole Phase 3 as one idempotent VPS script (3.1→3.6 + regressions) |
+| `deploy/run-vps-deploy.ps1` | **new**: Windows entry point — 1 `scp` + 1 `ssh`, password typed twice |
 
 **Reminder:** the API bridge must stay lazy/graceful — if the VPS is down, the Pages frontend still plays and keeps local records.

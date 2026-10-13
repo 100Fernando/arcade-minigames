@@ -267,3 +267,85 @@
   document.addEventListener('visibilitychange', syncGain);
   setInterval(schedule, 75);
 })();
+
+// Arkanoid - controles mobile: apenas lateral movement + launch action.
+// Reuses the same keyboard-event bridge as Space Invaders (script.js listens
+// on document for ArrowLeft/ArrowRight and Space -> keysAk / launch()).
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const section = $('arkanoidGameSection');
+  const canvas = $('akCanvas');
+  const start = $('akStartBtn');
+  const restart = $('akRestartBtn');
+  const gameContainer = $('akGameContainer');
+  if (!section || !canvas || !start || !restart) return;
+
+  const css = document.createElement('style');
+  css.textContent = `
+    #arkanoidGameSection.minimized > *:not(.game-header) { display:none !important; }
+    #arkanoidGameSection.minimized #akMobileControls { display:none !important; }
+    #akCanvas { display:block; width:100%; max-width:500px; height:auto; aspect-ratio:5/6; touch-action:none; }
+    #arkanoidGameSection, #akGameContainer, #arkanoidGameSection .ak-game-canvas-wrapper { min-width:0; max-width:100%; }
+    #arkanoidGameSection .ak-game-canvas-wrapper { position:relative; }
+    #akMobileControls { display:none; width:min(100%,500px); margin:14px auto 8px; gap:12px; justify-content:space-between; align-items:center; user-select:none; -webkit-user-select:none; touch-action:none; }
+    #akMobileControls button { flex:1; min-width:0; min-height:68px; border:1px solid #7486ff; border-radius:16px; color:white; background:#2a2e64; font-size:27px; font-weight:700; touch-action:none; -webkit-tap-highlight-color:transparent; }
+    #akMobileControls button:last-child { flex:1.25; background:#75407c; }
+    #akMobileControls button:active, #akMobileControls button.pressed { background:#5669c8; transform:scale(.97); }
+    @media (max-width:768px) {
+      .card { width:calc(100vw - 16px); max-width:100%; padding:20px 10px; margin:8px; box-sizing:border-box; }
+      .game-section { max-width:100%; }
+      #arkanoidGameSection .ak-game-container { width:100%; }
+      #akMobileControls { display:flex; }
+    }
+    @media (pointer:coarse) { #akMobileControls { display:flex; } }
+  `;
+  document.head.appendChild(css);
+
+  const mobile = document.createElement('div');
+  mobile.id = 'akMobileControls';
+  const buttonSpecs = [
+    ['←', 'ArrowLeft', 'Mover para a esquerda'],
+    ['→', 'ArrowRight', 'Mover para a direita'],
+    ['🚀', ' ', 'Launch ball']
+  ];
+  const held = new Map();
+  function send(key, type) {
+    document.dispatchEvent(new KeyboardEvent(type, {
+      key, code:key === ' ' ? 'Space' : key, bubbles:true, cancelable:true
+    }));
+  }
+  function release(button, key, pointerId) {
+    if (held.get(key) !== pointerId) return;
+    held.delete(key);
+    button.classList.remove('pressed');
+    send(key, 'keyup');
+  }
+  for (const [text, key, description] of buttonSpecs) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = text;
+    button.setAttribute('aria-label', description);
+    button.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      if (held.has(key)) return;
+      held.set(key, event.pointerId);
+      button.classList.add('pressed');
+      if (button.setPointerCapture) button.setPointerCapture(event.pointerId);
+      send(key, 'keydown');
+    });
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      button.addEventListener(type, event => {
+        event.preventDefault(); release(button, key, event.pointerId);
+      });
+    }
+    mobile.appendChild(button);
+  }
+  (gameContainer || section).insertAdjacentElement('afterend', mobile);
+  function releaseAll() {
+    for (const [key] of held) send(key, 'keyup');
+    held.clear();
+    mobile.querySelectorAll('button').forEach(b => b.classList.remove('pressed'));
+  }
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+})();

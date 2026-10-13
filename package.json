@@ -8,16 +8,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/100Fernando/spaces-invaders-game.git"
+    "url": "git+https://github.com/100Fernando/arcade-minigames.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/100Fernando/spaces-invaders-game/issues"
+    "url": "https://github.com/100Fernando/arcade-minigames/issues"
   },
-  "homepage": "https://github.com/100Fernando/spaces-invaders-game#readme",
+  "homepage": "https://github.com/100Fernando/arcade-minigames#readme",
   "dependencies": {
     "dotenv": "^18.0.6",
     "jose": "^6.2.12",

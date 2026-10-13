@@ -51,6 +51,12 @@
     if(!box) return;
     const clientId=(box.getAttribute('data-client-id')||'').trim();
     if(!clientId) return; // login disabled: manual gate is the only path
+    // Same API base ranking.js uses: absolute on Pages, same-origin on localhost.
+    const apiBase=()=>{
+      if(/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(location.href)) return '';
+      const m=document.getElementById('apiBase');
+      return (m&&m.content||'').trim();
+    };
     if(!/^https?:/.test(location.protocol)) return; // gsi refuses file://
     window.googleCredential=null;
     const s=document.createElement('script');
@@ -66,7 +72,7 @@
     const onCredential=(cred)=>{
       const id_token=typeof cred==='string'?cred:(cred&&cred.credential)||'';
       if(!id_token) return;
-      fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_token})})
+      fetch(apiBase() + '/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_token})})
         .then(r=>r.json())
         .then(d=>{
           if(!d||!d.ok) { console.log('[login] rejected by server'); return; }

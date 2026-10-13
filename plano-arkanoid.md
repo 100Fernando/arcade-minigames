@@ -16,7 +16,7 @@ A new game id **`arkanoid`** must be registered everywhere, or scores/ranking si
 - [x] 0.2 `server.js`: `const GAMES=['alvos','si']` → add `'arkanoid'` (line 14).
 - [x] 0.3 `ranking.js`: `GAMES` add `arkanoid:'🧈 Arkanoid'`; section map add `['arkanoidGameSection','arkanoid']`; global filter `<select>` add option `['arkanoid','🧈 Arkanoid']`.
 - [x] 0.4 `script.js`: new Arkanoid engine IIFE; register `hooks.arkanoidGameSection` in the icon-toggle loop (`[['arkanoidIcon','arkanoidGameSection']]`).
-- [ ] 0.5 `audio.js`: add `window.akSfx` bridge (see Phase 5).
+- [x] 0.5 `audio.js`: add `window.akSfx` bridge (see Phase 5).
 
 **Acceptance criteria:** section opens/closes via icon like the others; canvas blank but no console errors; ranking block renders for `arkanoid`; server accepts `game:'arkanoid'`.
 
@@ -83,10 +83,10 @@ Drop from destroyed bricks (prob ~0.12, cap concurrent like Alvos).
 
 Reuse `audio.js` `tone()`/`effects` machinery. Arkanoid gets its own bridge so it never collides with SI/Alvos.
 
-- [ ] 5.1 `window.akSfx = { bounce, brick, tough, power, bossHit, bossDown, loseLife, gameOver, victory, wave, laser, shield }` — distinct timbres (see Alvos `tgSfx` + SI `effects` as templates).
-- [ ] 5.2 **Soundtrack**: a looping arpeggio per phase (like Alvos ambient pentatonic loop + SI music step). Vary key/tempo by phase for "epic" feel; boss phases get a darker motif.
-- [ ] 5.3 Reuse the existing master gain + enable/volume controls (already tied to audio panel); gate all calls through `enabled`/`init()`.
-- [ ] 5.4 `script.js` calls `window.akSfx[k]` lazily (audio.js loads after script.js — same bridge pattern as `tgSfx`).
+- [x] 5.1 `window.akSfx = { bounce, brick, tough, power, bossHit, bossDown, loseLife, gameOver, victory, wave, laser, shield }` — distinct timbres (see Alvos `tgSfx` + SI `effects` as templates).
+- [x] 5.2 **Soundtrack**: a looping arpeggio per phase (like Alvos ambient pentatonic loop + SI music step). Vary key/tempo by phase for "epic" feel; boss phases get a darker motif.
+- [x] 5.3 Reuse the existing master gain + enable/volume controls (already tied to audio panel); gate all calls through `enabled`/`init()`.
+- [x] 5.4 `script.js` calls `window.akSfx[k]` lazily (audio.js loads after script.js — same bridge pattern as `tgSfx`).
 
 **Acceptance criteria:** distinct SFX per event; a phase-varying loop plays; mute/volume still work; no errors when audio unavailable.
 

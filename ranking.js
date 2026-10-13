@@ -4,6 +4,14 @@
 (() => {
   const $ = id => document.getElementById(id);
   const TIMEOUT = 3000;
+  // API base: absolute origin from <meta id="apiBase"> so the board works cross-origin
+  // on GitHub Pages. Empty = same origin; localhost always stays same-origin so local
+  // `node server.js` keeps working unchanged.
+  const API = (() => {
+    const m = document.getElementById('apiBase');
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(location.href)) return '';
+    return (m && m.content || '').trim();
+  })();
   const GAMES = {alvos: '🎯 Alvos', si: '👾 Space Invaders', arkanoid: '🧈 Arkanoid'};
 
   async function getJson(url) {
@@ -31,11 +39,11 @@
     const name = window.pcName ? window.pcName() : 'Anônimo';
     const token = window.googleCredential || null; // verified Google id_token, null = manual name
     (async () => {
-      await postJson('/api/score', {name, game, score, token});
+      await postJson(API + '/api/score', {name, game, score, token});
       refresh(game); refresh('all'); // success or not, the board is re-read
     })();
   };
-  window.loadRanking = game => getJson('/api/ranking?game=' + encodeURIComponent(game) + '&limit=10');
+  window.loadRanking = game => getJson(API + '/api/ranking?game=' + encodeURIComponent(game) + '&limit=10');
 
   const medals = ['🥥', '🥦', '🥧'];
   const bodies = {}; // game → ranking-body element (alvos, si, all)

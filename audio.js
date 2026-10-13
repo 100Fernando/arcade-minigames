@@ -233,4 +233,56 @@
     if (tgMusicStep % 8 === 4) tone(1046.50, .12, {wave:'sine', gain:.014}); // sparkle accent
     tgMusicStep++;
   }, 310);
+
+  // ===== Arkanoid: Neon Breaker — bridge + phase-varying soundtrack =====
+  // script.js loads first, so it reads window.akSfx lazily on every call.
+  window.akSfx = {
+    bounce: () => tone(520, .055, {end: 380, wave: 'triangle', gain: .05}),
+    brick: () => { tone(880, .07, {end: 1180, wave: 'triangle', gain: .055}); tone(1320, .05, {delay: .045, wave: 'sine', gain: .03}); },
+    tough: () => tone(240, .09, {end: 170, wave: 'square', gain: .05}),
+    laser: () => tone(1500, .06, {end: 420, wave: 'sawtooth', gain: .05}),
+    shield: () => tone(660, .14, {end: 990, wave: 'sine', gain: .07}),
+    power: () => [660, 880, 1100].forEach((n, i) => tone(n, .09, {delay: i * .07, wave: 'triangle', gain: .06})),
+    wave: () => [520, 660, 780, 1040].forEach((n, i) => tone(n, .13, {delay: i * .09, wave: 'sine', gain: .06})),
+    bossHit: () => tone(150, .12, {end: 90, wave: 'square', gain: .07}),
+    bossDown: () => [880, 660, 990, 1320].forEach((n, i) => tone(n, .2, {delay: i * .13, wave: 'triangle', gain: .08})),
+    loseLife: () => [420, 300, 190].forEach((n, i) => tone(n, .18, {delay: i * .11, wave: 'sawtooth', gain: .09})),
+    gameOver: () => effects.gameover(),
+    victory: () => effects.victory()
+  };
+
+  const akSec = $('arkanoidGameSection');
+  const akOverlay = $('akOverlay');
+  const akPhaseEl = $('akPhase');
+  const akRunning = () => akSec && !akSec.classList.contains('minimized') &&
+    akOverlay && akOverlay.style.display === 'none';
+
+  const akStart = $('akStartBtn'), akRestart = $('akRestartBtn');
+  if (akStart) akStart.addEventListener('click', () => { if (enabled) { init(); window.akSfx.wave(); } });
+  if (akRestart) akRestart.addEventListener('click', () => { if (enabled) { init(); window.akSfx.wave(); } });
+
+  // Soundtrack: pentatonic arpeggio that transposes and speeds up every phase;
+  // every third phase is a "boss" phase with a darker, minor-key motif.
+  const akMajor = [0, 2, 4, 7, 9, 7, 4, 2];
+  const akMinor = [0, 3, 5, 8, 10, 8, 5, 3];
+  let akMusicStep = 0, lastAkMusic = 0;
+  setInterval(() => {
+    if (!enabled || !akRunning()) return;
+    if (!context || context.state !== 'running') { if (!init()) return; }
+    const phase = akPhaseEl ? (parseInt(akPhaseEl.textContent, 10) || 1) : 1;
+    const boss = phase % 3 === 0;
+    const period = Math.max(155, 300 - phase * 11);
+    const now = performance.now();
+    if (now - lastAkMusic < period) return;
+    lastAkMusic = now;
+    const scale = boss ? akMinor : akMajor;
+    const root = (boss ? 132 : 196) * Math.pow(1.0595, (phase - 1) % 6);
+    const deg = scale[akMusicStep % scale.length];
+    const freq = root * Math.pow(2, deg / 12);
+    tone(freq, .19, {wave: 'triangle', gain: boss ? .016 : .021});
+    if (akMusicStep % 4 === 0) tone(root * .5, .26, {wave: 'sine', gain: .019});
+    if (akMusicStep % 8 === 6) tone(freq * 2, .10, {wave: 'sine', gain: .013});
+    if (boss && akMusicStep % 8 === 2) tone(root * .35, .22, {wave: 'sawtooth', gain: .016});
+    akMusicStep++;
+  }, 150);
 })();

@@ -6,6 +6,13 @@ const fs = require('fs');
 const http = require('http');
 const mysql = require('mysql2');
 const dotenv = require('dotenv');
+// jose v6 calls globalThis.crypto (Web Crypto). Node 18 — the VPS — does NOT define
+// that global (it was added in Node 19), so jwtVerify throws "crypto is not defined"
+// and every token is rejected. Polyfill it from node:crypto's WebCrypto implementation
+// (present since Node 17/18) so verification works on Node 18 too.
+if (!globalThis.crypto) {
+  try { globalThis.crypto = require('node:crypto').webcrypto; } catch (_) {}
+}
 // jose v6 is an ES Module: node 18 (the VPS) cannot require() it, so it is loaded
 // lazily with dynamic import() — which works on every node >= 12 and on node 24 too.
 let jose = null; // resolved on first use; `false` = unavailable

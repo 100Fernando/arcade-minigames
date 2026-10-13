@@ -6,10 +6,13 @@
 # (that is the ONLY script that needs the root password, and only the first time).
 #
 # Usage:
-#   deploy\run-vps-deploy.ps1                 # runs the newest fix (vps-fix2.sh)
-#   deploy\run-vps-deploy.ps1 vps-fix.sh      # run a specific script from deploy\
+#   deploy\run-vps-deploy.ps1                 # runs the finale (vps-ssl.sh)
+#   deploy\run-vps-deploy.ps1 vps-ssl.sh      # run a specific script from deploy\
+#
+# Superseded (kept for history, do not re-run): vps-setup.sh vps-fix.sh vps-fix2.sh
+# vps-fix3.sh vps-fix4.sh. Current chain: vps-keypair.ps1 (one-time) -> vps.ps1 / vps-ssl.sh.
 
-param([string]$script = "vps-fix2.sh")
+param([string]$script = "vps-ssl.sh")
 
 $ErrorStrict = $true
 $VPS  = "ferramox-vps"   # alias in ~/.ssh/config -> root@51.79.39.178 (key auth)

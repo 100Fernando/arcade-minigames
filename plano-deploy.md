@@ -199,6 +199,24 @@ but the **server must still verify `aud`**, which it does (`server.js:42`).
 
 ---
 
+## Phase 6 — Arcade frontend ALSO on the VPS at `/arcade/` (clickable Google button)  ✅ DONE (2026-10-13)
+
+**Why:** GitHub Pages is a static host and cannot send a `Cross-Origin-Opener-Policy` header, so the GSI
+**button** (`renderButton`) is unfixable there — it returns the credential via cross-frame `postMessage`,
+which Chrome's COOP blocks. The VPS/nginx CAN add that header, so serving the same frontend at a subpath
+gives a real clickable button. The wedding app at `/` and the ranking API at `/ranking-api/` stay untouched.
+
+- [x] 6.1 `deploy\vps-arcade.sh`: adds `location ^~ /arcade/ { alias /var/www/arcade/; index index.html; add_header Cross-Origin-Opener-Policy "same-origin-allow-popups"; }` to the SAME `frontend` block (idempotent; backup to /tmp only). GOTCHA: the bare `Cross-Origin-Opener-Policy …` directive is unknown to nginx → must use `add_header`.
+- [x] 6.2 `deploy\deploy-arcade.ps1`: `mkdir /var/www/arcade` → scp the 6 static files (CRLF stripped) → scp+run `vps-arcade.sh`. Key-only SSH, zero password prompts. `-show` prints live `/arcade/` + COOP state.
+- [x] 6.3 `script.js`: `renderButton` is now **conditional** — rendered only when `!/github\.io$/i.test(location.hostname)` (VPS + localhost get the button; Pages keeps FedCM One Tap only, no COOP error).
+- [x] 6.4 Verified live: `https://ferramox.duckdns.org/arcade/` → 200, COOP header `same-origin-allow-popups` present, button renders, **no COOP/postMessage error** (only the expected `FedCM get() rejects` = no Google session in the profile). Regressions green: `/ranking-api/api/health` 200 `login:"google"`, wedding `/` 200, wedding `/api/x` 401.
+
+**Origin note:** the OAuth client already authorizes `https://ferramox.duckdns.org` (origins ignore the path), so `/arcade/` needs NO Google reconfiguration. `index.html` `apiBase` already points at `https://ferramox.duckdns.org/ranking-api`, so the arcade page and its API share one origin (no CORS).
+
+**Trade-off:** Pages auto-updates from git pushes; the VPS frontend needs a manual `deploy\deploy-arcade.ps1` on each change.
+
+---
+
 ## Files touched
 
 | File | Change |

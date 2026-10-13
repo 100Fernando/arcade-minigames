@@ -40,7 +40,8 @@ log "local health (node direct)"
 curl -s "http://127.0.0.1:8765/api/health" || echo "NODE DOWN - check pm2 log"
 
 # ---------------------------------------------------------------- certbot
-if [ ! -e "/etc/letsencrypt/certificates/$DOMAIN/cert.pem" ]; then
+CERT="/etc/letsencrypt/certificates/$DOMAIN"
+if [ ! -e "$CERT/cert.pem" ]; then
   log "install certbot (was missing, found in 0.4)"
   apt-get update -y
   apt-get install -y certbot
@@ -57,7 +58,8 @@ if [ ! -e "/etc/letsencrypt/certificates/$DOMAIN/cert.pem" ]; then
         print "    location /.well-known/acme-challenge/ { alias " cert "/; }";
         done=1 }
     ' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
-    nginx -t && systemctl restart nginx
+    nginx -t || { echo "acme insert rejected - restoring"; cp "$CONF.bak" "$CONF"; exit 1; }
+    systemctl restart nginx
   fi
 
   log "certbot certonly (webroot)"
@@ -75,8 +77,7 @@ fi
 log "3.5 nginx: proxy /ranking-api/ + HTTPS on the EXISTING server block"
 if ! grep -q "ranking-api" "$CONF"; then
   cp "$CONF" "$CONF.bak2"
-  awk -v cert="/etc/letsencrypt/certificates/$DOMAIN/pub-certificate.pem" \
-      -v key="/etc/letsencrypt/certificates/$DOMAIN/priv-certificate.pem" '
+  awk '
     { print }
     /server_name/ && !done {
       print "";
@@ -94,8 +95,7 @@ if ! grep -q "ranking-api" "$CONF"; then
 fi
 
 if ! grep -q "listen 443" "$CONF"; then
-  awk -v cert="/etc/letsencrypt/certificates/$DOMAIN/pub-certificate.pem" \
-      -v key="/etc/letsencrypt/certificates/$DOMAIN/priv-certificate.pem" '
+  awk -v cert="$CERT/cert.pem" -v key="$CERT/private/privkey.pem" '
     { print }
     /listen[[:space:]]+80/ && !ssl {
       print "    listen 443 ssl;";

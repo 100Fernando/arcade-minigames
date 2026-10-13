@@ -92,12 +92,7 @@
       try{
         // GSI requires initialize() BEFORE prompt(); without it Google logs
         // "Missing required parameter: client_id" and One Tap never renders.
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          ux_mode: 'prompt',
-          // login_uri is intentionally absent: One Tap posts the credential to
-          // the page itself, and we send it to /api/login ourselves.
-        });
+        window.google.accounts.id.initialize({client_id: clientId});
         window.google.accounts.id.prompt(onCredential);
       }catch(e){console.log('[login] One Tap unavailable — manual name kept');}
     };

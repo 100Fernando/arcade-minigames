@@ -117,7 +117,10 @@
       try{
         // GSI requires initialize() BEFORE prompt(); without it Google logs
         // "Missing required parameter: client_id" and One Tap never renders.
-        window.google.accounts.id.initialize({client_id: clientId});
+        // The callback here is what renderButton invokes with the credential when
+        // the button is clicked — without it the button's credential is dropped and
+        // login never completes (prompt() only wires the One Tap path).
+        window.google.accounts.id.initialize({client_id: clientId, callback: onCredential});
         // The rendered button returns the credential to the page via a cross-frame
         // postMessage, which Chrome's Cross-Origin-Opener-Policy blocks when the
         // embedding page cannot send a permissive COOP header. GitHub Pages is a

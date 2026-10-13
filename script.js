@@ -402,19 +402,27 @@
     storyTitle.textContent=title;storyText.textContent=text;story.style.display='flex';
     continueBtn.onclick=()=>{story.style.display='none';next();};
   }
+  // HUD cache: only touch the DOM when a value actually changes, avoiding
+  // per-frame textContent writes and the boss-bar layout reflow on mobile.
+  const hudCache={score:-1,best:-1,lives:-1,level:-1,speed:-1,power:'',bossShown:null,bossHp:-1,bossName:''};
   function updateHUD(){if(!g)return;
-    $('siScore').textContent=String(g.score).padStart(5,'0');
+    if(g.score!==hudCache.score){hudCache.score=g.score;$('siScore').textContent=String(g.score).padStart(5,'0');}
     if(g.score>siBest){siBest=g.score;try{localStorage.setItem('siHighscore',String(siBest));}catch(_){}}
-    $('siBest').textContent=String(siBest).padStart(5,'0');
-    $('siLives').textContent='❤'.repeat(Math.max(0,g.lives));
-    $('siLevel').textContent=g.level;$('siSpeed').textContent=g.speed.toFixed(2)+'x';
-    $('siPowerUps').textContent=(g.timers.multishot?'🔥 ':'')+(g.timers.shield?'🛡️ ':'')+(g.timers.rapidfire?'⚡⚡':'');
-    bossBar.style.display=g.boss?'block':'none';
-    if(g.boss){$('siBossName').textContent=g.boss.name+' · '+Math.ceil(g.boss.hp)+' PV';
-      $('siBossFill').style.width=clamp(100*g.boss.hp/g.boss.maxHp,0,100)+'%';}
+    if(siBest!==hudCache.best){hudCache.best=siBest;$('siBest').textContent=String(siBest).padStart(5,'0');}
+    if(g.lives!==hudCache.lives){hudCache.lives=g.lives;$('siLives').textContent='❤'.repeat(Math.max(0,g.lives));}
+    if(g.level!==hudCache.level){hudCache.level=g.level;$('siLevel').textContent=g.level;}
+    if(g.speed!==hudCache.speed){hudCache.speed=g.speed;$('siSpeed').textContent=g.speed.toFixed(2)+'x';}
+    const power=(g.timers.multishot?'🔥 ':'')+(g.timers.shield?'🛡️ ':'')+(g.timers.rapidfire?'⚡⚡':'');
+    if(power!==hudCache.power){hudCache.power=power;$('siPowerUps').textContent=power;}
+    const bossShown=!!g.boss;
+    if(bossShown!==hudCache.bossShown){hudCache.bossShown=bossShown;bossBar.style.display=bossShown?'block':'none';}
+    if(g.boss){const hp=Math.ceil(g.boss.hp);
+      if(hp!==hudCache.bossHp){hudCache.bossHp=hp;$('siBossName').textContent=g.boss.name+' · '+hp+' PV';
+        $('siBossFill').style.width=clamp(100*g.boss.hp/g.boss.maxHp,0,100)+'%';}}
   }
   const hit=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
-  function burst(x,y,color){for(let i=0;i<12;i++)g.particles.push({x,y,vx:rnd(-130,130),vy:rnd(-130,130),life:.5,color});}
+  function burst(x,y,color){for(let i=0;i<12;i++)g.particles.push({x,y,vx:rnd(-130,130),vy:rnd(-130,130),life:.5,color});
+    if(g.particles.length>140)g.particles.splice(0,g.particles.length-140);}
   function bullet(x,y,vx,vy,hostile=true,w=5,h=11){
     (hostile?g.enemyBullets:g.bullets).push({x,y,vx,vy,w,h,active:true});
   }
@@ -503,8 +511,13 @@
   }
   function update(ms){if(!g||g.ended)return;
     const dt=ms/1000, tier=Math.floor((g.level-1)/5);
-    g.x=clamp(g.x+(Number(keys.right)-Number(keys.left))*BASE_SPEED*g.speed*dt,0,W-g.w);
-    g.y=clamp(g.y+(Number(keys.down)-Number(keys.up))*BASE_SPEED*g.speed*dt,Y_MIN,H-g.h);
+    // Analog stick (mobile): window.siStick.x/y in [-1,1]; keyboard still works.
+    const st=window.siStick||null;
+    const sx=st?clamp(st.x,-1,1):0, sy=st?clamp(st.y,-1,1):0;
+    const mx=(Number(keys.right)-Number(keys.left))+sx;
+    const my=(Number(keys.down)-Number(keys.up))+sy;
+    g.x=clamp(g.x+mx*BASE_SPEED*g.speed*dt,0,W-g.w);
+    g.y=clamp(g.y+my*BASE_SPEED*g.speed*dt,Y_MIN,H-g.h);
     g.shot=Math.max(0,g.shot-ms);if(keys.shoot)shoot();
     for(const k of Object.keys(g.timers))g.timers[k]=Math.max(0,g.timers[k]-ms);
     g.invulnerable=Math.max(0,g.invulnerable-ms);g.flash=Math.max(0,g.flash-ms);

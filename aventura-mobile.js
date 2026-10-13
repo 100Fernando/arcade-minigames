@@ -22,6 +22,7 @@
     #siMobileControls button { flex:1; min-width:0; min-height:68px; border:1px solid #7486ff; border-radius:16px; color:white; background:#2a2e64; font-size:27px; font-weight:700; touch-action:none; -webkit-tap-highlight-color:transparent; }
     #siMobileControls button:last-child { flex:1.25; background:#75407c; }
     #siMobileControls button:active, #siMobileControls button.pressed { background:#5669c8; transform:scale(.97); }
+    #siStickZone { position:relative; flex:1.6; min-width:0; min-height:120px; border:1px solid #7486ff; border-radius:18px; background:#20244a; touch-action:none; -webkit-tap-highlight-color:transparent; }
     @media (max-width:768px) {
       .card { width:calc(100vw - 16px); max-width:100%; padding:20px 10px; margin:8px; box-sizing:border-box; }
       .game-section { max-width:100%; }
@@ -31,14 +32,15 @@
       #siGameSection .overlay-content { max-width:94%; }
     }
     @media (pointer:coarse) { #siMobileControls { display:flex; } }
+    @media (pointer:coarse) { .star, .particle { display:none !important; } }
   `;
   document.head.appendChild(css);
   const mobile = document.createElement('div');
   mobile.id = 'siMobileControls';
   const gameContainer = $('siGameContainer');
+  // Movement is now an analog stick in a fixed zone in the controls bar
+  // (see below); the DOM buttons keep only the fire action.
   const buttonSpecs = [
-    ['←', 'ArrowLeft', 'Mover para a esquerda'],
-    ['→', 'ArrowRight', 'Mover para a direita'],
     ['🔥', ' ', 'Atirar']
   ];
   const held = new Map();
@@ -80,6 +82,76 @@
   }
   window.addEventListener('blur', releaseAll);
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+
+  // ============================================================
+  // Analog stick in a FIXED zone in the controls bar, LEFT of the fire
+  // button — so the finger never covers the play area / the ship.
+  // The base ring is fixed at the zone centre; drag the finger and the
+  // knob follows within a radius, mapping direction + distance to the
+  // ship (8 directions, analog speed). Exposes window.siStick = {x,y}.
+  // ============================================================
+  const stickZone = document.createElement('div');
+  stickZone.id = 'siStickZone';
+  stickZone.setAttribute('aria-label', 'Control de movimento: toc and drag to move the ship');
+  // Fixed base ring (always visible, centred) + moving knob.
+  const base = document.createElement('div');
+  base.style.cssText =
+    'position:absolute;left:50%;top:50%;width:110px;height:110px;border-radius:50%;' +
+    'transform:translate(-50%,-50%);pointer-events:none;' +
+    'background:rgba(40,46,90,.35);border:2px solid rgba(120,140,255,.55);';
+  const knob = document.createElement('div');
+  knob.style.cssText =
+    'position:absolute;left:50%;top:50%;width:60px;height:60px;border-radius:50%;' +
+    'transform:translate(-50%,-50%);pointer-events:none;' +
+    'background:rgba(120,140,255,.55);border:2px solid rgba(180,200,255,.9);';
+  stickZone.appendChild(base); stickZone.appendChild(knob);
+  // Insert as the FIRST child of the controls bar -> sits left of the fire button.
+  mobile.insertBefore(stickZone, mobile.firstChild);
+
+  const STICK_RADIUS = 48; // px of drag that maps to full speed
+  let stickPointer = null;
+  function setStick(nx, ny) {
+    if (!window.siStick) window.siStick = { x: 0, y: 0 };
+    window.siStick.x = nx; window.siStick.y = ny;
+  }
+  function resetStick() {
+    setStick(0, 0);
+    knob.style.left = '50%'; knob.style.top = '50%';
+    stickPointer = null;
+  }
+  function applyDrag(px, py) {
+    const rect = stickZone.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    let dx = px - cx, dy = py - cy;
+    const len = Math.hypot(dx, dy);
+    const scale = len > STICK_RADIUS ? STICK_RADIUS / len : 1;
+    const clampedX = dx * scale, clampedY = dy * scale;
+    // Knob offset relative to the zone centre (its CSS anchor is 50%/50%).
+    knob.style.left = 'calc(50% + ' + clampedX + 'px)';
+    knob.style.top = 'calc(50% + ' + clampedY + 'px)';
+    setStick(clampedX / STICK_RADIUS, clampedY / STICK_RADIUS);
+  }
+  stickZone.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    stickPointer = event.pointerId;
+    if (stickZone.setPointerCapture) { try { stickZone.setPointerCapture(event.pointerId); } catch (_) {} }
+    applyDrag(event.clientX, event.clientY);
+  });
+  stickZone.addEventListener('pointermove', event => {
+    if (stickPointer !== event.pointerId) return;
+    event.preventDefault();
+    applyDrag(event.clientX, event.clientY);
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    stickZone.addEventListener(type, event => {
+      if (stickPointer !== event.pointerId) return;
+      event.preventDefault(); resetStick();
+    });
+  }
+  // Clear the stick whenever the game is hidden/minimized or the tab blurs.
+  const clearStick = () => { if (window.siStick) { window.siStick.x = 0; window.siStick.y = 0; } resetStick(); };
+  window.addEventListener('blur', clearStick);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearStick(); });
 
   // Musica-tema autoral gerada no navegador, sem MP3 nem download externo.
   const AudioClass = window.AudioContext || window.webkitAudioContext;

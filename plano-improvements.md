@@ -10,6 +10,19 @@
 
 ---
 
+## Improvement 3 — Mobile analog joystick (Free Fire style) + performance
+
+- [x] 3.1 `aventura-mobile.js`: floating joystick layer over the canvas (`#siStickLayer`, `pointer:coarse` only). Touch anywhere, drag finger; exposes `window.siStick={x,y}` in [-1,1]. Base+knob visuals follow the finger.
+- [x] 3.2 `aventura-mobile.js`: DOM buttons reduced to fire only (←/→ removed; movement is the stick).
+- [x] 3.3 `script.js` `update()`: reads `window.siStick`, blends with keyboard; analog speed via `mx/my * BASE_SPEED`.
+- [x] 3.4 `script.js` `updateHUD()`: HUD cache — DOM written only when a value changes (kills per-frame reflow, esp. `siBossFill` width).
+- [x] 3.5 `script.js` `burst()`: cap `g.particles` at 140 (drop oldest) so many-enemy fights don't accumulate.
+- [x] 3.6 `aventura-mobile.js` CSS: hide `.star`/`.particle` background DOM on `pointer:coarse` (canvas already draws its own stars).
+
+**Acceptance criteria:** on touch, dragging anywhere on the play area moves the ship in 8 directions with proportional speed; keyboard still works; FPS stays smooth with many enemies; fire button still works.
+
+---
+
 ## Improvement 1 — Vertical movement of the ship
 
 - [x] 1.1 Add `up`/`down` to `keys` (`script.js:67`)

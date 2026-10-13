@@ -21,6 +21,7 @@ env/
 # Test run artifacts
 auth-test.log
 diff_alvos.txt
+test-results/mp-run*.txt
 
 # OS
 .DS_Store

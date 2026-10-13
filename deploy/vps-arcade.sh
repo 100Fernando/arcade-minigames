@@ -34,7 +34,7 @@ else
       print "    location ^~ /arcade/ {"
       print "        alias /var/www/arcade/;"
       print "        index index.html;"
-      print "        add_header Cross-Origin-Opener-Policy \"same-origin-allow-popups\";"
+      print "        add_header Cross-Origin-Opener-Policy \"unset\";"
       print "    }"
     }
   ' "$CONF" > /tmp/frontend.arcade

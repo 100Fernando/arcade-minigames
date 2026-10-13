@@ -75,10 +75,29 @@
                 </div>
             </div>
         </div>
+        <div class="game-section minimized" id="mpGameSection">
+            <div class="game-header"><div class="game-icon" id="mpIcon" title="Clique para abrir o jogo">🌐</div><h2 class="game-title">🌐 Space Invaders · Multiplayer</h2></div>
+            <div class="mp-game-container" id="mpGameContainer">
+                <div class="mp-canvas-wrapper">
+                    <canvas id="mpCanvas" width="500" height="600"></canvas>
+                    <div class="overlay" id="mpOverlay">
+                        <div class="overlay-content">
+                            <h2 id="mpTitle">Space Invaders · Multiplayer</h2>
+                            <div class="overlay-controls">
+                                <button class="btn-primary" id="mpStartBtn" type="button">Create match</button>
+                                <button class="btn-secondary" id="mpRestartBtn" type="button">Restart</button>
+                            </div>
+                            <div class="overlay-hint">Up to 4 players · PC + mobile · share the 4-letter code</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <script src="script.js"></script>
     <script src="ranking.js"></script>
     <script src="audio.js"></script>
     <script src="aventura-mobile.js"></script>
+    <script src="mp-client.js"></script>
 </body>
 </html>

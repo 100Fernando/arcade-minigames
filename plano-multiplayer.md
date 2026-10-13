@@ -1,0 +1,124 @@
+# 🌐 Space Invaders — Multiplayer Online — Plano
+
+**Goal:** multiplayer **online** (never local/split-screen) for Space Invaders: up to **4 players in the same match**, mixing **PC + mobile** arbitrarily. Needs **match creation**, a **lobby**, join-by-code, and a shared game that stays in sync across devices.
+
+**Rule:** implement one phase at a time; update this file after each one. Never break the single-player games (`si`, `alvos`, `arkanoid`).
+
+**Status:** � Complete — Phases 0–4 implemented and verified (2026-10-13): `test-mp.js` 25/25 PASS, two browser pages synced on the same `tick`, live on `https://ferramox.duckdns.org/arcade/` (SHA-matched).
+
+---
+
+## Why this architecture (the decision that shapes everything)
+
+The frontend is **static** (GitHub Pages + `/arcade/` on the VPS). There is no WS server and nginx has no `Upgrade` mapping. So:
+
+> **Server-authoritative, fixed-timestep simulation + HTTP polling.**
+> The VPS Node process owns the single source of truth: it steps the world every **50 ms (20 Hz)** and holds each player's input state. Clients only **send input** and **pull a snapshot** to render. No WebRTC, no WS, no determinism requirement across devices (only the server simulates), no new nginx `location` (routes live under the existing `/ranking-api/` proxy), no new pm2 service, no new dependency.
+
+Consequences:
+- One origin for everything: `https://ferramox.duckdns.org/ranking-api/api/mp/*` (already proxied, already CORS `*`).
+- Latency = one poll (250 ms) — fine for co-op arcade.
+- Rooms live **in memory** (Map + TTL), not in MySQL. Ranking still goes to MySQL via the existing `/api/score`.
+
+---
+
+## Phase 0 — Registration + shared simulation module
+
+- [x] 0.1 New file **`si-sim.js`**: CommonJS module (the server `require`s it; the client never needs it — it only renders snapshots). Exports:
+  `create(mode)`, `step(world, dtMs)`, `snapshot(world)`, `applyInput(world, seat, input)`, `serialize/deserialize`.
+  This is the **only** simulation. The single-player engine in `script.js` is **not touched** (zero regression risk) — the MP sim is a compact re-implementation sharing the same constants (`BASE_SPEED=250`, `Y_MIN=H*0.45`, fleet/boss cadences).
+- [x] 0.2 `server.js`: `GAMES` add **`si_mp`**; `--ensure-table` enum widening array becomes `["alvos","si","arkanoid","si_mp"]`.
+- [x] 0.3 `ranking.js`: `GAMES` add `si_mp:'🌐 SI Multiplayer'`; global filter `<select>` add the option. (No per-section board: the MP section renders its own result panel.)
+- [ ] 0.4 `index.html`: new `game-section minimized` `id="mpGameSection"` — icon `mpIcon` 🌐, title "🌐 Space Invaders · Multiplayer", `mpGameContainer` → wrapper + `canvas id="mpCanvas" width="500" height="600"` + `overlay id="mpOverlay"` (`mpStartBtn` create/join, `mpRestartBtn`, hint).
+- [x] 0.5 Styles: `mp-client.js` injects its own `<style>` (same pattern `aventura-mobile.js` uses) — `styles.css` left untouched, zero regression risk.
+
+**Acceptance:** section opens/closes via the icon loop; canvas blank; no console errors; `GET /api/mp/health` → `{ok:true}`.
+
+---
+
+## Phase 1 — Server: rooms, lobby, lifecycle
+
+All in `server.js`, under `/api/mp/*`, with a `ROOMS` Map + a 20 Hz `setInterval` stepper and a TTL sweeper.
+
+| Route | Effect |
+|-------|--------|
+| `GET /api/mp/health` | `{ok, rooms, tickRate}` |
+| `GET /api/mp/lobby` | `[{code, players:[{name,alive,lives,score}], level, status, age}]` — open rooms only |
+| `POST /api/mp/create {name,mode}` | new room, 4-char code from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), status `waiting`, returns `{code, seat, snapshot}` |
+| `POST /api/mp/join {code,name}` | seat the player (max 4, dedupe by name), returns `{seat, snapshot}` |
+| `POST /api/mp/start {code}` | status `live`, everyone starts together |
+| `POST /api/mp/input {code,seat,mx,my,fire}` | updates that seat's input; ack only |
+| `GET /api/mp/state?code=` | compact snapshot (see 0.1) — `Cache-Control: no-store` |
+| `POST /api/mp/leave {code,seat}` | seat goes offline (ship stops, can rejoin) |
+| `POST /api/mp/restart {code}` | fresh world, same seats |
+
+Guards: body ≤ 2 KB, code must exist, seat must be an integer in range, `mx/my` clamped `[-1,1]`, `fire` boolean; create rate-limited 1 per 10 s per IP; max 20 open rooms; rooms expire after 30 min of inactivity (sweeper every 60 s).
+
+**Acceptance (scripted, `test-mp.js`):** create → join ×3 → start → 4 seats polling for 6 s → all see the **same `tick`** and identical world arrays; leave marks offline; lobby lists the room; expired room disappears.
+
+---
+
+## Phase 2 — Co-op rules (the actual gameplay design)
+
+Shared world, per-player identity:
+
+- **4 ships, 4 colors**: P1 green `#00ff88`, P2 cyan `#4facfe`, P3 amber `#ffcc00`, P4 magenta `#f093fb`. Name label above each ship.
+- **No friendly fire**: bullets pass through other ships; ships pass through each other.
+- **Per-player lives (3) + respawn**: a hit ship loses a life and respawns at the bottom after 2.5 s with 1.5 s invulnerability. **The match only ends when every alive seat is 0 lives at the same instant** → status `over`.
+- **Shared fleet / level / boss**: same `level`, same boss every 5th level, same chapter cards (`story` shown to all clients).
+- **Shared powerups**: any ship can catch one; effect applies only to that ship.
+- **Per-player score** + **team total** in the HUD; `SPEED` global.
+- **Offline seat**: no input for 8 s → `offline`, ship frozen and translucent, HUD shows 💡; joining again while `live` respawns it.
+- **End of match**: each seat posts its own score to `/api/score` with `game:'si_mp'` (Google token path unchanged), and the section shows the ranking of the 4 seats + team total.
+
+**Acceptance:** 4 ships move independently; a ship hit doesn't kill the match while others live; level advances on shared clear; boss appears at level 5 for all; per-player scores differ; match ends only when all are out.
+
+---
+
+## Phase 3 — Client: lobby + join + render + mobile controls
+
+New file **`mp-client.js`** (loaded after `script.js`/`ranking.js`), own IIFE, prefix `mp*`.
+
+- [x] 3.1 **Lobby panel** (DOM, script-built): auto-refresh every 3 s from `/api/mp/lobby` (`startLobby()`, independent of the match loop so the lobby is never blank on a fresh page); rows `code · level · 👤n/4 · status`; buttons **Create match**, **Join by code** (`<input maxLength=4>` + confirm), **Start match**, **Leave my match**.
+- [x] 3.2 **Room state machine** in the client: `none → waiting → live → over`, auto-start at 20 s (or when a host presses Start); `endMatch()` posts the seat's own score via `window.submitScore('si_mp', …)`.
+- [x] 3.3 **Renderer**: draws the snapshot on `mpCanvas` (starfield, warning/laser columns, enemies, boss + HP bar, bullets, powerups, particles, 4 colored ships with name tag + hearts, flash, story card, `connLost` banner). Verified by reading back the canvas pixels: fleet band `rgb(255,51,102)` + `rgb(240,147,251)`, own ship band `rgb(0,255,136)`.
+- [x] 3.4 **Polling loop**: `fetch` state every 250 ms with the 3 s `AbortController` timeout pattern from `ranking.js`; on failure → `connLost` banner and the last frame stays.
+- [x] 3.5 **Input**: PC keyboard (`←→↑↓`/`ADWS`/Space) → `POST /api/mp/input` throttled to 100 ms; mobile → analog `#mpStickZone` + 🔥 button, shown only under `@media (max-width:768px)` / `(pointer:coarse)`; own ids, never touches `window.siStick`.
+- [x] 3.6 **Join by code UX**: 4-char code typed in a `<input>`, normalized to uppercase, `/^[A-Z2-9]{4}$/` guard, invalid/unknown code → "Match not found — check the code".
+
+**Acceptance:** two browser pages (one desktop-sized, one 390 px wide) create/join the same room and both render the same `tick`; mobile stick drives only the MP ship; console clean.
+
+---
+
+## Phase 4 — Deploy + verification
+
+- [x] 4.1 `node --check si-sim.js mp-client.js server.js test-mp.js` clean; `get_errors` clean.
+- [x] 4.2 `test-mp.js` (node, no browser): scripted 4-client match — **25/25 PASS** (tick sync, leave, restart, 20 s direct-sim soak).
+- [x] 4.3 VPS: scp `si-sim.js` + `server.js` into `/opt/ranking-api` (CRLF stripped), `node --check` on the box, `pm2 restart ranking-api` → `curl 127.0.0.1:8765/api/mp/health` = `{"ok":true,"rooms":0,"tick":50}`; from Windows `https://ferramox.duckdns.org/ranking-api/api/mp/create` → `{"ok":true,"code":"VL43",…}`.
+- [x] 4.4 Frontend: `deploy\deploy-arcade.ps1` `$FILES` gained **`mp-client.js` only** (`si-sim.js` is server-side, it goes to `/opt/ranking-api`, NOT to the webroot) → served bytes SHA `32104bb7…` == local.
+- [ ] 4.5 `git commit` + push; verify Pages served bytes match repo (SHA), per the known Pages gotcha.
+- [x] 4.6 `README.md` API table extended with the 9 MP routes.
+
+---
+
+## File touch map
+
+| File | Change |
+|------|--------|
+| `si-sim.js` | **new** — the shared simulation (server + browser), the single source of truth |
+| `mp-client.js` | **new** — lobby, join, polling renderer, PC + mobile input, result panel |
+| `server.js` | `GAMES` + `si_mp`; `/api/mp/*` routes; `ROOMS` Map + 20 Hz stepper + TTL sweeper |
+| `index.html` | `mpGameSection` block + `<script src="mp-client.js">` + `si-sim.js` |
+| `ranking.js` | `GAMES` + filter option for `si_mp` |
+| `styles.css` | `.mp-*` lobby/overlay (minor) |
+| `test-mp.js` | **new** — scripted 4-player verification |
+| `deploy/deploy-arcade.ps1` | `$FILES` add `si-sim.js`, `mp-client.js` |
+
+## Risks / guards
+- **Never** reuse ids (`si*`, `ak*`, `tg*`) — MP uses `mp*`.
+- `si-sim.js` must be CommonJS-loadable (`require`) **and** browser-loadable (`window.SiSim`); no `require` at top level of browser path.
+- The MP stepper must be inside `try/catch` — a throwing step must not crash the pm2 process (that would take down `/api/ranking` too).
+- Snapshot must stay small: cap particles at 60, enemies at 42, bullets at 80; drop `baseX`/`t` from the wire format.
+- `Cache-Control: no-store` on state responses — nginx/Pages caching would freeze the match.
+- Single-player SI stays byte-identical; the MP sim is separate. If they ever drift, that is a deliberate fork, not a shared refactor.
+- Room codes are unauthenticated by design (public lobby). Cap creates/IP and cap open rooms so the box can't be flooded.

@@ -27,7 +27,18 @@ const DB = {host: env.HOST, port: Number(env.PORT || 3306), user: env.USER, pass
 const TABLE = 'ranking';
 const USERS_TABLE = 'google_users';
 const PORT = Number(process.env.PORT || 8765);
-const GAMES = ['alvos', 'si', 'arkanoid'];
+const GAMES = ['alvos', 'si', 'arkanoid', 'si_mp'];
+
+// ---- multiplayer: the room simulation lives HERE, not in the browser ----
+// si-sim.js is CommonJS (require-able) and holds the whole co-op world. The server
+// is the single source of truth: it steps every room every TICK ms and clients only
+// POST input and GET a snapshot. No WebSocket, no determinism across devices.
+const SiSim = require('./si-sim.js');
+const TICK = 50;                 // 20 Hz fixed timestep
+const ROOM_LIFE_MS = 30 * 60 * 1000;   // a room nobody touches for 30 min is gone
+const MAX_ROOMS = 20;
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I: codes get typed
+const rooms = new Map();         // code -> {code, world, hostIp, lastActivity, started}
 
 // ---- Google OIDC: the client id is public, but it must match the token's aud ----
 // Both can be overridden from the real environment (used by test-auth-token.js);
@@ -108,11 +119,20 @@ function cleanName(v) {
   return s.slice(0, 24) || 'Anônimo';
 }
 const lastPost = new Map(); // ip → timestamp, one insert per 5s
+const lastCreate = new Map(); // ip → timestamp, one room per 10s
 function tooFast(ip) {
   const now = Date.now(), prev = lastPost.get(ip);
   if (prev && now - prev < 5000) return true;
   lastPost.set(ip, now);
   if (lastPost.size > 5000) lastPost.clear();
+  return false;
+}
+
+function tooFastCreate(ip) {
+  const now = Date.now(), prev = lastCreate.get(ip);
+  if (prev && now - prev < 10000) return true;
+  lastCreate.set(ip, now);
+  if (lastCreate.size > 5000) lastCreate.clear();
   return false;
 }
 
@@ -122,8 +142,154 @@ function json(rq, obj, code) {
   rq.end(body);
 }
 
-const STATIC = {'/': 'index.html', '/index.html': 'index.html', '/styles.css': 'styles.css', '/script.js': 'script.js', '/audio.js': 'audio.js', '/aventura-mobile.js': 'aventura-mobile.js', '/ranking.js': 'ranking.js'};
-const TYPES = {'index.html': 'text/html; charset=utf-8', 'styles.css': 'text/css; charset=utf-8', 'script.js': 'text/javascript; charset=utf-8', 'audio.js': 'text/javascript; charset=utf-8', 'aventura-mobile.js': 'text/javascript; charset=utf-8', 'ranking.js': 'text/javascript; charset=utf-8'};
+// ---- multiplayer engine ----
+function newCode() {
+  for (let tries = 0; tries < 40; tries++) {
+    let c = '';
+    for (let i = 0; i < 4; i++) c += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    if (!rooms.has(c)) return c;
+  }
+  return null;
+}
+function touch(w) { w.lastActivity = Date.now(); }
+function createRoom(ip, mode) {
+  if (rooms.size >= MAX_ROOMS) return null;
+  const code = newCode();
+  if (!code) return null;
+  const world = SiSim.create(mode);
+  const room = { code, world, hostIp: ip, lastActivity: Date.now(), started: 0 };
+  rooms.set(code, room);
+  return room;
+}
+function findRoom(code) {
+  const c = String(code == null ? '' : code).trim().toUpperCase();
+  return rooms.get(c);
+}
+function lobbyList() {
+  const out = [];
+  for (const r of rooms.values()) {
+    const w = r.world;
+    if (w.status === 'over') continue;
+    out.push({
+      code: r.code,
+      status: w.status,
+      level: w.level,
+      mode: w.mode,
+      seats: w.players.length,
+      players: w.players.map((p) => ({ name: p.name, lives: p.lives, score: p.score, alive: p.alive ? 1 : 0, offline: p.offline ? 1 : 0 })),
+      age: Math.round((Date.now() - w.createdAt) / 1000),
+    });
+  }
+  out.sort((a, b) => b.age - a.age);
+  return out;
+}
+// One stepper for every room: a throwing step must never take down the ranking
+// API, so each room is guarded separately and a broken room is dropped.
+setInterval(() => {
+  const now = Date.now();
+  for (const [code, r] of rooms) {
+    if (now - r.world.lastActivity > ROOM_LIFE_MS) { rooms.delete(code); continue; }
+    if (r.world.status !== 'live') continue;
+    try { SiSim.step(r.world, TICK); } catch (e) {
+      console.log('[mp] room ' + code + ' step failed: ' + (e.message || e) + ' -> dropped');
+      rooms.delete(code);
+    }
+  }
+}, TICK);
+
+function mpHandle(path, req, rq, body, qs) {
+  if (path === '/api/mp/health') return json(rq, { ok: true, rooms: rooms.size, tick: TICK });
+
+  if (path === '/api/mp/lobby') return json(rq, lobbyList());
+
+  if (path === '/api/mp/create') {
+    if (req.method !== 'POST') return json(rq, { error: 'use POST' }, 405);
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    if (tooFastCreate(ip)) return json(rq, { error: 'too fast' }, 429);
+    const room = createRoom(ip, String(body.mode || ''));
+    if (!room) return json(rq, { error: 'server full' }, 503);
+    const seat = SiSim.addPlayer(room.world, cleanName(body.name));
+    touch(room.world);
+    json(rq, { ok: true, code: room.code, seat, snapshot: SiSim.snapshot(room.world) });
+    return;
+  }
+
+  if (path === '/api/mp/join') {
+    if (req.method !== 'POST') return json(rq, { error: 'use POST' }, 405);
+    const room = findRoom(body.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    const name = cleanName(body.name);
+    for (const p of room.world.players) if (p.name === name) { // same name = same seat
+      return json(rq, { ok: true, seat: p.seat, snapshot: SiSim.snapshot(room.world) });
+    }
+    const seat = SiSim.addPlayer(room.world, name);
+    if (seat < 0) return json(rq, { error: 'room full' }, 409);
+    touch(room.world);
+    json(rq, { ok: true, seat, snapshot: SiSim.snapshot(room.world) });
+    return;
+  }
+
+  if (path === '/api/mp/start') {
+    const room = findRoom(body.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    if (!room.world.players.length) return json(rq, { error: 'no players' }, 403);
+    room.world.status = 'live';
+    room.started = Date.now();
+    touch(room.world);
+    json(rq, { ok: true, snapshot: SiSim.snapshot(room.world) });
+    return;
+  }
+
+  if (path === '/api/mp/input') {
+    const room = findRoom(body.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    const seat = Number(body.seat);
+    if (!Number.isInteger(seat) || seat < 0 || seat >= room.world.players.length) return json(rq, { error: 'bad seat' }, 403);
+    SiSim.applyInput(room.world, seat, body.mx, body.my, body.fire);
+    touch(room.world);
+    json(rq, { ok: true, t: room.world.tick });
+    return;
+  }
+
+  if (path === '/api/mp/leave') {
+    const room = findRoom(body.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    const seat = Number(body.seat);
+    const p = room.world.players[Number.isInteger(seat) ? seat : -1];
+    if (!p) return json(rq, { error: 'bad seat' }, 403);
+    p.offline = true; p.mx = 0; p.my = 0; p.fire = false;
+    touch(room.world);
+    json(rq, { ok: true });
+    return;
+  }
+
+  if (path === '/api/mp/restart') {
+    const room = findRoom(body.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    room.world = SiSim.restart(room.world);
+    touch(room.world);
+    json(rq, { ok: true, snapshot: SiSim.snapshot(room.world) });
+    return;
+  }
+
+  if (path === '/api/mp/state') {
+    const room = findRoom(qs.code);
+    if (!room) return json(rq, { error: 'room not found' }, 404);
+    touch(room.world);
+    rq.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'no-store',   // a cached snapshot would freeze the match
+    });
+    rq.end(JSON.stringify(SiSim.snapshot(room.world)));
+    return;
+  }
+
+  return json(rq, { error: 'unknown mp route' }, 404);
+}
+
+const STATIC = {'/': 'index.html', '/index.html': 'index.html', '/styles.css': 'styles.css', '/script.js': 'script.js', '/audio.js': 'audio.js', '/aventura-mobile.js': 'aventura-mobile.js', '/ranking.js': 'ranking.js', '/mp-client.js': 'mp-client.js'};
+const TYPES = {'index.html': 'text/html; charset=utf-8', 'styles.css': 'text/css; charset=utf-8', 'script.js': 'text/javascript; charset=utf-8', 'audio.js': 'text/javascript; charset=utf-8', 'aventura-mobile.js': 'text/javascript; charset=utf-8', 'ranking.js': 'text/javascript; charset=utf-8', 'mp-client.js': 'text/javascript; charset=utf-8'};
 
 function createTable() {
   const sql = fs.readFileSync(new URL('bootstrap.sql', `file://${process.cwd()}/`)).toString();
@@ -142,6 +308,19 @@ function handle(req, rq) {
   if (req.method === 'OPTIONS') { // preflight for the JSON POST
     rq.writeHead(204, {'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type'});
     return rq.end();
+  }
+
+  // ---- multiplayer: everything under /api/mp/ is served from the room map ----
+  if (path.indexOf('/api/mp/') === 0) {
+    if (path === '/api/mp/state') return mpHandle(path, req, rq, null, qs);
+    let raw = '';
+    req.on('data', (c) => { raw += c; if (raw.length > 2000) req.destroy(); });
+    req.on('end', () => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch (_) { return json(rq, { error: 'bad json' }, 400); }
+      mpHandle(path, req, rq, body, qs);
+    });
+    return;
   }
 
   if (path === '/api/health') return json(rq, {ok: true, db: DB.database, table: TABLE, login: GOOGLE_CLIENT_ID ? 'google' : 'off'});
@@ -258,7 +437,7 @@ function handle(req, rq) {
         if (gameCol) {
           const type = String(gameCol.Type || gameCol.sql_type || '').toLowerCase();
           if (!type.includes('arkanoid')) {
-            const enumVals = ["alvos", "si", "arkanoid"];
+            const enumVals = ["alvos", "si", "arkanoid", "si_mp"];
             const nn = String(gameCol.Null || '').toUpperCase() === 'NO' ? 'NOT NULL' : '';
             await q('ALTER TABLE ' + TABLE + " MODIFY game ENUM('" + enumVals.join("','") + "')" + (nn ? ' ' + nn : ''), []);
             console.log('[ok] ranking.game ENUM widened to include arkanoid');

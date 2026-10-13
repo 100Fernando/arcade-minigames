@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1) mkdir /var/www/arcade on the VPS
-#   2) scp the 6 static frontend files there (CRLF stripped so browsers get clean LF)
+#   2) scp the 7 static frontend files there (CRLF stripped so browsers get clean LF)
 #   3) scp + run deploy\vps-arcade.sh (nginx location ^~ /arcade/ + COOP header)
 #
 # Usage:
@@ -18,7 +18,7 @@ param([switch]$show)
 $ErrorStrict = $true
 $VPS = "ferramox-vps"   # alias -> root@51.79.39.178 (key auth)
 $WEBROOT = "/var/www/arcade"
-$FILES = @("index.html","styles.css","script.js","ranking.js","audio.js","aventura-mobile.js")
+$FILES = @("index.html","styles.css","script.js","ranking.js","audio.js","aventura-mobile.js","mp-client.js")
 
 if ($show) {
   ssh $VPS "curl -sk -m 10 -o /dev/null -w 'arcade=%{http_code}\n' https://ferramox.duckdns.org/arcade/; curl -sk -m 10 -D - -o /dev/null https://ferramox.duckdns.org/arcade/ | grep -i cross-origin-opener-policy; ls -1 $WEBROOT"

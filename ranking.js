@@ -12,7 +12,7 @@
     if (/^https?:\/\/(localhost|127\.0\.0\.1)/i.test(location.href)) return '';
     return (m && m.content || '').trim();
   })();
-  const GAMES = {alvos: '🎯 Alvos', si: '👾 Space Invaders', arkanoid: '🧈 Arkanoid'};
+  const GAMES = {alvos: '🎯 Alvos', si: '👾 Space Invaders', arkanoid: '🧈 Arkanoid', si_mp: '🌐 SI Multiplayer'};
 
   async function getJson(url) {
     const ac = new AbortController();
@@ -101,7 +101,7 @@
     const select = document.createElement('select');
     select.setAttribute('aria-label', 'Filter');
     select.style.cssText = 'display:block;margin:8px auto 0;padding:6px;border-radius:8px;background:#24243e;color:#fff;border:1px solid #667eea;font:13px sans-serif';
-    for (const [v, t] of [['all', 'All'], ['alvos', '🎯 Alvos'], ['si', '👾 Space Invaders'], ['arkanoid', '🧈 Arkanoid']]) {
+    for (const [v, t] of [['all', 'All'], ['alvos', '🎯 Alvos'], ['si', '👾 Space Invaders'], ['arkanoid', '🧈 Arkanoid'], ['si_mp', '🌐 SI Multiplayer']]) {
       const o = document.createElement('option'); o.value = v; o.textContent = t; select.appendChild(o);
     }
     try { select.value = localStorage.getItem('rankingFilter') || 'all'; } catch (_) { select.value = 'all'; }

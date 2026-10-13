@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each one. Never break the other two games.
 
-**Status:** 🟡 Phase 0 + Phase 1 + **Phase 2** complete (layouts + brick types + speed ramp) — Phases 3-6 pending.
+**Status:** 🟡 Phase 0 + Phase 1 + **Phase 2 + Phase 3** complete (layouts/types/speed + bosses) — Phases 4-6 pending.
 
 > **Why it feels flat today:** only Phase 1 is live, so every phase is the same 10-column grid of 1-hit bricks, constant ball speed, no drops, no boss. The whole "challenge" is just clearing rows. The richness you want = Phases 2 (varied layouts + brick types + speed ramp), 3 (bosses), 4 (powerups). Elaborated below with concrete numbers so each is directly implementable.
 
@@ -66,16 +66,16 @@ Replace the single `buildBricks()` grid with `buildBricks()` calling `layoutFor(
 
 Boss every 4th phase (4/8/12), like Alvos/SI. Mirror SI `bossDefs` shape.
 
-- [ ] 3.1 `akBossDefs` (concrete):
+- [x] 3.1 `akBossDefs` (concrete):
   | # | Boss (phase) | Size | Color | Movement | Attack |
   |---|-------------|------|-------|----------|--------|
   | 0 | **Guardian Neon** (4) | 120×46 | cyan | horizontal patrol `vx=90` | drops 3-ball fan of projectiles |
   | 1 | **Warden Grid** (8) | 150×52 | magenta | patrol + sine `±28` | spawns 2 minion bricks per cycle |
   | 2 | **Core Breaker** (12) | 140×64 | amber | vertical bob `±40` | telegraphed sweeping laser (reuse SI `warning`/`laser`) |
-- [ ] 3.2 `ak.boss={name,x,y,baseY,w,h,hp,maxHp,vx,kind,t}`; HP bar reuses the SI boss-bar DOM pattern (name + `hp/maxHp` fill%) — add an `akBossBar` like `bossBar` in the SI IIFE.
-- [ ] 3.3 Attacks per `kind` (cadence `Math.max(700,1600-tier*150)` ms): (0) 3 projectiles `vy=+240` aimed-ish; (1) spawn 2 moving bricks at edges; (2) `warning` telegraph 800ms then full-height `laser` (paddle must dodge).
-- [ ] 3.4 Ball hits boss → `hp--`, `sfx('bossHit')`, `burstAk`; boss down → `points += 500*(tier+1)` + `sfx('bossDown')` + phase clear. Boss projectile hits paddle → `loseLife()`.
-- [ ] 3.5 Phase locked until boss `hp<=0` (skip the "clear all bricks" win when `ak.boss` present).
+- [x] 3.2 `ak.boss={name,x,y,baseY,w,h,hp,maxHp,vx,kind,t}`; HP bar reuses the SI boss-bar DOM pattern (name + `hp/maxHp` fill%) — add an `akBossBar` like `bossBar` in the SI IIFE.
+- [x] 3.3 Attacks per `kind` (cadence `Math.max(700,1600-tier*150)` ms): (0) 3 projectiles `vy=+240` aimed-ish; (1) spawn 2 moving bricks at edges; (2) `warning` telegraph 800ms then full-height `laser` (paddle must dodge).
+- [x] 3.4 Ball hits boss → `hp--`, `sfx('bossHit')`, `burstAk`; boss down → `points += 500*(tier+1)` + `sfx('bossDown')` + phase clear. Boss projectile hits paddle → `loseLife()`.
+- [x] 3.5 Phase locked until boss `hp<=0` (skip the "clear all bricks" win when `ak.boss` present).
 
 **Acceptance criteria:** boss at phase 4/8/12 with HP bar; 3 distinct attack patterns; defeating it clears the phase; projectiles threaten the paddle.
 

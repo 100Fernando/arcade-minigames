@@ -69,11 +69,31 @@ Introduce a single **API base** the frontend uses, defaulting to same-origin so 
 Everything is scripted — **run `deploy\run-vps-deploy.ps1`** from this repo root. It does exactly two commands, so the root password is typed **twice** (once for `scp`, once for `ssh`) and never through the model:
 
 ```powershell
-deploy\run-vps-deploy.ps1                                   # interactive certbot (asks for email/consent)
+deploy\run-vps-deploy.ps1                                   # runs deploy/vps-setup.sh (first attempt)
 CERTBOT_EMAIL=you@example.com deploy\run-vps-deploy.ps1     # fully non-interactive certbot
 ```
 
-What `deploy/vps-setup.sh` does on the VPS (idempotent, `set -e`, restores the nginx backup if `nginx -t` rejects the edit):
+**Run 1 (2026-10-12) — partial, then fixed by `deploy/vps-fix.sh`:**
+- ✅ 3.1/3.2 staged + `npm install` (15 pkgs, 0 vulns) · ✅ 3.3 `--ensure-table` (all four checks already satisfied) · ✅ 3.4 `pm2 start ranking-api` online (the wedding app is `casamento-backend`, also on pm2) · ✅ certbot installed via apt (2.9.0).
+- ❌ **"NODE DOWN"**: false alarm — the health curl raced `pm2 start` (no sleep). Fixed with `sleep 3`.
+- ❌ **certbot webroot 404**: `awk` inserted the ACME location after the **first** `server_name` in `sites-enabled/frontend`, which is **not** the ferramox block (nginx also warned `conflicting server name "_" on 0.0.0.0:80`). So the challenge file was served by the wrong block → ACME 404.
+- Fix in `deploy/vps-fix.sh`: restore the pristine config from `frontend.bak` (saved by run 1), then **`certbot --nginx`** (the plugin finds and edits the block that serves the domain, adding challenge + HTTPS itself); manual webroot fallback now matches the **domain** in `server_name`, not the first one. The `/ranking-api/` proxy insert likewise matches `index($0, dom)`.
+
+**Run 2 (2026-10-12) — `deploy/vps-fix.sh` (certbot --nginx):** reached node/pm2 state (ranking-api online, error log empty) and ran `certbot --nginx`. **But** its first step `cp "$CONF.bak" "$CONF"` restored the **pre-certbot** config, which **undid HTTPS** — see the `nginx -T` dump below: no loaded file has `listen 443`. So HTTPS is currently **off** again.
+
+**Run 3/4 (2026-10-12) — `vps-fix3.sh` / `vps-fix4.sh`: both FATAL'd** ("no file has `listen 443`"). `vps-fix3` used `grep -rl` which **skips the `sites-enabled` symlinks**; `vps-fix4` used `nginx -T` (correct) but found no `listen 443` because HTTPS was reverted in run 2.
+
+**`nginx -T` dump (the ground truth, run 4):**
+- `/etc/nginx/sites-enabled/frontend` → `server_name _;` (catch-all) + `location /.well-known/acme-challenge/` + `location /` + `location /api/` (→ `proxy_pass http://localhost:3001` = wedding backend). **No `listen 443`.**
+- `frontend.bak` and `frontend.bak6` are ALSO loaded as sites (my `cp "$CONF" "$CONF.bak"` wrote backups **inside** `sites-enabled/`) → duplicate catch-all `server_name _` blocks → the `conflicting server_name "_"` warning. **These backups must be removed.**
+
+**⏸ END OF DAY 2026-10-12 — RESUME HERE (VPS nginx is in a messy, half-broken state):**
+1. **Delete the backup pollution:** `rm /etc/nginx/sites-enabled/frontend.bak*` (they are loaded as duplicate sites). Keep only `frontend`.
+2. **Re-issue HTTPS:** `certbot --nginx -d ferramox.duckdns.org --non-interactive --agree-tos --email fernando-klj@hotmail.com` (cert may already exist in `/etc/letsencrypt`; `--nginx` will add `listen 443 ssl` to the `frontend` block).
+3. **Insert the proxy into `frontend`** (the catch-all IS the block that serves the domain — `server_name _` matches every host, and it's the only site). Use `location ^~ /ranking-api/ { proxy_pass http://127.0.0.1:8765/; ... }` — `^~` so no regex location can shadow it; bare `/` so `/ranking-api/api/health` → `:8765/api/health`. Do NOT match on the domain in `server_name` (it's `_`).
+4. `nginx -t` → `systemctl restart nginx` → verify the 4 points (health JSON over HTTPS, ranking board, wedding root 200, wedding `/api/x` 401).
+
+**What is GREEN today (do not redo):** Pages **live** (`https://100fernando.github.io/arcade-minigames/` → 200, Enforce HTTPS on). `server.js` jose fix committed + `test-auth-token.js` 8/8 PASS. VPS: `ranking-api` on pm2 (online, serving :8765), `--ensure-table` satisfied, certbot installed, cert likely present. Wedding regressions intact (root 200, `/api/x` 401). **Only the `/ranking-api/` proxy + HTTPS in nginx remain.**
 
 1. **3.1/3.2** stage `server.js` + `bootstrap.sql` + `package.json` + `.env` into `/opt/ranking-api` (`chmod 600` on `.env`, then `shred -u` the staged copy in `/tmp`), `npm install dotenv mysql2 jose`.
 2. **3.3** `node server.js --ensure-table` → reconciles `google_users` + `ranking`.

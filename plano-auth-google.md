@@ -121,6 +121,34 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 
 ---
 
+## Phase F — Gate UX: identity comes from Google, no manual typing (commit `f66c0bb`)
+
+User request: *"continua existindo o campo pra preencher o nome para ranking. isso deveria ser coletado
+da conta google … se já estiver logado, mostrar uma mensagem de saudação e o nome, foto do user e
+option de logout. se não, solicitar login."*
+
+- [x] F.1 **Manual name field hidden when Google is configured** — pure CSS, no JS duplication:
+      `.google-login.enabled ~ label` and `.google-login.enabled ~ button#confirmNameBtn` → `display:none`.
+      The `<input id="playerName">` markup stays (fallback for `file://` / no client id / blocked gsi).
+- [x] F.2 **Signed-in card**: `#googleProfile` (`hidden` by default, `.on` when signed in) renders
+      greeting `Hello, <name>!` + `<img id="googleAvatar">` (Google photo, 56px round) + `#googleLogoutBtn`.
+      The login button is hidden via `.google-login.signedin .google-btn{display:none}`.
+- [x] F.3 **Signed-out = login offered**: One Tap (`prompt`) + a real rendered button
+      (`renderButton`, `text:'continue_with'`) — the button works with no prior Google session, where One Tap
+      renders nothing.
+- [x] F.4 **Logout**: `disableAutoSelect()` + `revoke(email)` + drop `googleCredential`/`googleUser` +
+      `localStorage.removeItem(playerName/googleEmail/googlePicture)` + remove `signedin`/`on` classes +
+      re-`prompt(onCredential)` so the player can sign in again.
+- [x] F.5 **Gate auto-opens on login**: `card.classList.remove('gate-pending')` — the name came from Google,
+      so no "Confirmar & play" click is needed.
+- [x] F.6 Verified in browser at `http://localhost:8765/`: gate shows only the Google option (no name field),
+      `node --check` clean.
+
+**Acceptance:** with Google configured the player never types a name; signed-in state shows greeting + name +
+photo + logout; signed-out state shows a login option; the public board still shows **name only**.
+
+---
+
 ## File touch map
 
 | File | Change |

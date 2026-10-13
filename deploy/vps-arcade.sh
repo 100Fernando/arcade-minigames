@@ -35,6 +35,7 @@ else
       print "        alias /var/www/arcade/;"
       print "        index index.html;"
       print "        add_header Cross-Origin-Opener-Policy \"none\";"
+      print "        add_header Cache-Control \"no-store\";"
       print "    }"
     }
   ' "$CONF" > /tmp/frontend.arcade

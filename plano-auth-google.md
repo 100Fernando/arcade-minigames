@@ -107,6 +107,16 @@ ID Token (JWT) claims from Google Sign-In (scopes `openid email`):
 - [x] E.2d **Client id validated as real + registered:** probing `/o/oauth2/v2/auth` with the id returns **`redirect_uri_mismatch`** (a *known* client), while a fabricated id returns **`invalid_client`**. So the id exists; only the origin list gates it.
 - [x] E.2e **Origin check, live from the Pages tab:** after the fix the console no longer says `missing_client_id`; it now says **`Not signed in with the identity provider.`** = the Pages origin **is** authorized and Google accepted the client. (On localhost the same flow reported `Provider's accounts list is empty` + `FedCM get() rejects with NetworkError` — the browser profile has no Google account signed in, so no card can render.)
 - [ ] E.3 Browser test with a **signed-in** browser profile: Pages → One Tap card → submit a score → DB row has `user_id` + `game='arkanoid'`.
+      **Diagnosed 2026-10-13 (why the card does not appear):** the code and the deploy are fine — the served
+      `script.js` is byte-identical to the repo (SHA256 match, `Last-Modified` after the push) and contains
+      `initialize({client_id: clientId})`. GSI initializes (`g_state` cookie present, box class `enabled`),
+      but FedCM reports **`Not signed in with the identity provider.`** / **`Provider's accounts list is empty`**
+      → this browser profile has **no Google session**, so One Tap has nothing to offer and renders no card.
+      Fix = sign in to Google in that same profile, then reload. Not a code fault.
+- [x] E.3b **GitHub Pages deploy verified landed** despite the Actions email `pages-build-deployment … Failure
+      (status: 500 … is githubstatus.com reporting a Pages outage?)`: that is a **transient GitHub outage**, not
+      a repo error. Ground truth: served `script.js` SHA256 == `raw…/main/script.js` == local, and
+      `Last-Modified: 13 Oct 2026 14:12:51 GMT` is after the push. No re-run needed.
 - [ ] E.4 `node --check` all JS; `get_errors` clean; commit + push; set Status 🟢.
 
 ---

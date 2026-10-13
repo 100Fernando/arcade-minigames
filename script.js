@@ -691,7 +691,7 @@
     const akHud=document.createElement('div');
     akHud.id='akScoreDisplay';
     akHud.style.cssText='display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin:10px 0;color:white;font:12px monospace';
-    akHud.innerHTML='<span>SCORE: <b id="akScore">0</b></span><span>BEST: <b id="akBest">'+akBest+'</b></span><span>VIDAS: <b id="akLives">❤❤❤</b></span><span>FASE: <b id="akPhase">1</b></span><span>COMBO: <b id="akCombo">x1</b></span>';
+    akHud.innerHTML='<span>SCORE: <b id="akScore">0</b></span><span>BEST: <b id="akBest">'+akBest+'</b></span><span>VIDAS: <b id="akLives">❤❤❤</b></span><span>FASE: <b id="akPhase">1</b></span><span>COMBO: <b id="akCombo">x1</b></span><span id="akEffects"></span>';
     akSec.insertBefore(akHud,akSec.querySelector('.ak-game-container')||akSec.firstChild);
     const akBossBar=document.createElement('div');
     akBossBar.style.cssText='display:none;max-width:500px;margin:8px auto;color:#fff;font:13px sans-serif;text-align:center';
@@ -704,6 +704,8 @@
       $('akLives').textContent='❤'.repeat(Math.max(0,ak.lives));
       $('akPhase').textContent=ak.phase;
       $('akCombo').textContent='x'+(1+ak.combo);
+      const fx=(ak.timers.laser?'🔥 ':'')+(ak.timers.x2?'×2 ':'')+(ak.timers.slow?'🐌 ':'')+(ak.timers.sticky?'◎ ':'')+(ak.shield?'🛡 ':'');
+      $('akEffects').textContent=fx;
       akBossBar.style.display=ak.boss?'block':'none';
       if(ak.boss){$('akBossName').textContent=ak.boss.name+' · '+Math.ceil(ak.boss.hp)+' PV';
         $('akBossFill').style.width=clamp(100*ak.boss.hp/ak.boss.maxHp,0,100)+'%';}
@@ -751,6 +753,31 @@
       }
     }
     function speedFor(p){return Math.min(620,300+p*24);}
+    // Effective ball speed multiplier from timers (slow / speed-up).
+    function effMult(){return ak.timers.slow>0?0.7:ak.timers.fast>0?1.25:1;}
+    const POWER_EMOJI={expand:'↔',multiball:'⁂',laser:'🔥',sticky:'◎',slow:'🐌',x2:'×2',life:'❤',shield:'🛡',shrink:'⚠',fast:'⚠'};
+    const POWER_WEIGHTS=[['expand',2],['multiball',2],['laser',1],['sticky',1],['slow',1],['x2',2],['life',1],['shield',1]];
+    function dropBrick(br){
+      if(ak.powerUps.length>=3)return;
+      const bad=Math.random()<0.05;
+      let type;
+      if(bad)type=Math.random()<0.5?'shrink':'fast';
+      else{let total=0;for(const [t,w] of POWER_WEIGHTS)total+=w;let roll=Math.random()*total;for(const [t,w] of POWER_WEIGHTS){roll-=w;if(roll<=0){type=t;break;}}}
+      ak.powerUps.push({x:br.x+br.w/2-10,y:br.y,w:20,h:20,type,age:0});
+    }
+    function applyPower(type){
+      sfx('power');
+      if(type==='expand')ak.paddle.w=Math.min(160,ak.paddle.w+30);
+      else if(type==='shrink')ak.paddle.w=Math.max(50,ak.paddle.w-25);
+      else if(type==='multiball'){const extra=[];for(const b of ak.balls){if(ak.balls.length+extra.length>=5)break;if(!b.stuck){for(const s of[-0.5,0.5]){const a=Math.atan2(b.vy,b.vx)+s;const m=Math.hypot(b.vx,b.vy);extra.push({x:b.x,y:b.y,vx:Math.cos(a)*m,vy:Math.sin(a)*m,r:b.r,stuck:false});}}}ak.balls=ak.balls.concat(extra);}
+      else if(type==='laser')ak.timers.laser=8000;
+      else if(type==='sticky')ak.timers.sticky=6000;
+      else if(type==='slow')ak.timers.slow=6000;
+      else if(type==='fast')ak.timers.fast=6000;
+      else if(type==='x2')ak.timers.x2=8000;
+      else if(type==='life')ak.lives=Math.min(5,ak.lives+1);
+      else if(type==='shield')ak.shield=1;
+    }
     const akBossDefs=[
       {name:'Guardian Neon',w:120,h:46,body:'#00f2fe',trim:'#7fd4ff',vx:90,kind:0},
       {name:'Warden Grid',w:150,h:52,body:'#f093fb',trim:'#8b3fa8',vx:70,kind:1},
@@ -774,7 +801,9 @@
     function reset(){
       ak={paddle:{x:(AW-PAD_W0)/2,w:PAD_W0},balls:[],bricks:[],particles:[],
         lives:3,points:0,phase:1,combo:0,over:false,speed:speedFor(1),
-        boss:null,bossBullets:[],bossTimer:0,warning:0,warningX:0,laser:0,laserX:0};
+        boss:null,bossBullets:[],bossTimer:0,warning:0,warningX:0,laser:0,laserX:0,
+        powerUps:[],laserBolts:[],shield:0,
+        timers:{laser:0,sticky:0,slow:0,x2:0,fast:0}};
       ak.balls=[{x:ak.paddle.x+ak.paddle.w/2,y:PAD_Y-7,r:7,stuck:true}];
       keysAk.left=keysAk.right=false;
       buildBricks();maybeSpawnBoss();updateHUD();
@@ -783,7 +812,8 @@
       for(const b of ak.balls)if(b.stuck){
         b.stuck=false;
         const ang=rnd(-.22,.22);
-        b.vx=Math.sin(ang)*ak.speed;b.vy=-Math.cos(ang)*ak.speed;
+        const spd=ak.speed*effMult();
+        b.vx=Math.sin(ang)*spd;b.vy=-Math.cos(ang)*spd;
         sfx('bounce');
       }
     }
@@ -803,10 +833,11 @@
       br.hp--;
       if(br.hp<=0){
         ak.combo=Math.min(ak.combo+1,9);
-        ak.points+=br.value*(1+ak.combo);
+        ak.points+=br.value*(1+ak.combo)*(ak.timers.x2>0?2:1);
         burstAk(b.x,b.y,brickColor(br));
-        sfx(br.type==='explosive'?'brick':'brick');
+        sfx('brick');
         if(br.type==='explosive')explodeBrick(br);
+        else dropBrick(br);
       }else sfx('tough');
       const cx=clamp(b.x,br.x,br.x+br.w),cy=clamp(b.y,br.y,br.y+br.h);
       const dx=b.x-cx,dy=b.y-cy;
@@ -857,14 +888,15 @@
           if(b.y<b.r){b.y=b.r;b.vy=Math.abs(b.vy);sfx('bounce');}
           if(b.vy>0&&b.y+b.r>=PAD_Y&&b.y-b.r<=PAD_Y+PAD_H&&b.x>=ak.paddle.x-6&&b.x<=ak.paddle.x+ak.paddle.w+6){
             const off=clamp((b.x-pcx)/(ak.paddle.w/2),-1,1);
-            const ang=off*MAX_TILT,sp=ak.speed;
+            const ang=off*MAX_TILT,sp=ak.speed*effMult();
             b.vx=Math.sin(ang)*sp;b.vy=-Math.cos(ang)*sp;
             b.y=PAD_Y-b.r-0.5;
+            if(ak.timers.sticky>0){b.stuck=true;b.vx=0;b.vy=0;}
             ak.combo=0;sfx('bounce');
           }
           for(const br of ak.bricks)if(br.hp>0&&circleRect(b,br)){hitBrick(br,b);break;}
           if(ak.boss&&ak.boss.hp>0&&circleRect(b,ak.boss)){ak.boss.hp--;sfx('bossHit');burstAk(b.x,b.y,ak.boss.body);b.vy=-Math.abs(b.vy);b.y=ak.boss.y+ak.boss.h+b.r;break;}
-          if(b.y>AH+20){b.dead=true;break;}
+          if(b.y>AH+20){if(ak.shield>0){ak.shield=0;b.y=PAD_Y-b.r;b.x=pcx;b.vx=0;b.vy=-ak.speed*effMult();sfx('shield');}else{b.dead=true;break;}}
         }
       }
       // Moving bricks drift once per frame and bounce off the side walls.
@@ -884,6 +916,22 @@
       }
       ak.balls=ak.balls.filter(b=>!b.dead);
       if(!ak.balls.length){loseLife();if(ak.over)return;}
+      // Powerups fall and are caught by the paddle.
+      for(const p of ak.powerUps){p.age+=ms;p.y+=165*dt;
+        if(p.y>AH||p.age>18000)p.dead=true;
+        else if(p.y+p.h>=PAD_Y&&p.y<=PAD_Y+PAD_H&&p.x+p.w>=ak.paddle.x&&p.x<=ak.paddle.x+ak.paddle.w){p.dead=true;applyPower(p.type);}
+      }
+      ak.powerUps=ak.powerUps.filter(p=>!p.dead);
+      // Laser bolts fire upward from the paddle edges and break any brick.
+      for(const k of Object.keys(ak.timers))ak.timers[k]=Math.max(0,ak.timers[k]-ms);
+      if(ak.timers.laser>0){if(ak.laserTimer==null)ak.laserTimer=0;ak.laserTimer+=ms;
+        if(ak.laserTimer>=350){ak.laserTimer=0;
+          ak.laserBolts.push({x:ak.paddle.x+4,y:PAD_Y,vx:0,vy:-520},{x:ak.paddle.x+ak.paddle.w-6,y:PAD_Y,vx:0,vy:-520});}}
+      for(const lb of ak.laserBolts){lb.y+=lb.vy*dt;
+        if(lb.y<-20){lb.dead=true;continue;}
+        for(const br of ak.bricks)if(br.hp>0&&lb.x>=br.x&&lb.x<=br.x+br.w&&lb.y>=br.y&&lb.y<=br.y+br.h){br.hp--;if(br.hp<=0){ak.points+=br.value;burstAk(br.x+br.w/2,br.y+br.h/2,brickColor(br));if(br.type==='explosive')explodeBrick(br);}lb.dead=true;break;}
+      }
+      ak.laserBolts=ak.laserBolts.filter(lb=>!lb.dead);
       for(const p of ak.particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;}
       ak.particles=ak.particles.filter(p=>p.life>0);
       if(ak.boss){if(ak.boss.hp<=0){ak.points+=500*(ak.boss.tier+1);sfx('bossDown');nextPhase();return;}
@@ -915,6 +963,9 @@
         ctx.fillStyle='#101329';ctx.fillRect(b.x+26,b.y+16,12,10);ctx.fillRect(b.x+b.w-38,b.y+16,12,10);
       }
       ctx.fillStyle='#ff5577';for(const pb of ak.bossBullets){ctx.beginPath();ctx.arc(pb.x,pb.y,pb.r,0,Math.PI*2);ctx.fill();}
+      for(const p of ak.powerUps){ctx.fillStyle={expand:'#0088ff',multiball:'#ff8800',laser:'#ff00ff',sticky:'#00ff88',slow:'#00f2fe',x2:'#ffff00',life:'#ff3366',shield:'#00ff88',shrink:'#ff0000',fast:'#ff0000'}[p.type];
+        ctx.fillRect(p.x,p.y,p.w,p.h);ctx.fillStyle='#fff';ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillText(POWER_EMOJI[p.type],p.x+10,p.y+15);}
+      ctx.fillStyle='#00ff88';for(const lb of ak.laserBolts)ctx.fillRect(lb.x,lb.y,3,10);
       ctx.shadowColor='#00f2fe';ctx.shadowBlur=14;
       const grd=ctx.createLinearGradient(ak.paddle.x,0,ak.paddle.x+ak.paddle.w,0);
       grd.addColorStop(0,'#00f2fe');grd.addColorStop(1,'#f093fb');

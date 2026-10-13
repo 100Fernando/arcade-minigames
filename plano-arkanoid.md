@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each one. Never break the other two games.
 
-**Status:** 🟡 Phase 0 + Phase 1 + **Phase 2 + Phase 3** complete (layouts/types/speed + bosses) — Phases 4-6 pending.
+**Status:** 🟡 Phase 0 + Phase 1 + **Phase 2 + Phase 3 + Phase 4** complete (layouts/types/speed + bosses + powerups) — Phases 5-6 pending.
 
 > **Why it feels flat today:** only Phase 1 is live, so every phase is the same 10-column grid of 1-hit bricks, constant ball speed, no drops, no boss. The whole "challenge" is just clearing rows. The richness you want = Phases 2 (varied layouts + brick types + speed ramp), 3 (bosses), 4 (powerups). Elaborated below with concrete numbers so each is directly implementable.
 
@@ -85,11 +85,11 @@ Boss every 4th phase (4/8/12), like Alvos/SI. Mirror SI `bossDefs` shape.
 
 Drop from destroyed bricks: `dropProb = 0.12` (phase-scaled up to 0.18), cap concurrent `ak.powerUps.length <= 3` (like Alvos). Capsule `{x,y,vy:170,type,age}`, `w=h=20`, paddle AABB overlap → apply + `sfx('power')`.
 
-- [ ] 4.1 Falling capsule `{x,y,type}`; paddle overlap → apply + `sfx('power')`; expires at `y>AH` or `age>18000`.
-- [ ] 4.2 **Good powerups** (weights): expand (paddle `w=min(160,w+30)`, w2) · multiball (split each ball into 3, max 5 balls, w2) · laser (paddle fires 2 bolts up for 8s, breaks armored, w1) · sticky (catch & relaunch, 6s, w1) · slow (ball speed ×0.7 for 6s, w1) · x2 (score ×2 for 8s, w2) · life (+1, cap 5, w1) · shield (one free bounce below paddle, w1).
-- [ ] 4.3 **Bad powerups** (rare, ~0.05, drawn with ⚠️ so player avoids): shrink (`w=max(50,w-25)`) · speed-up (×1.25 for 6s).
-- [ ] 4.4 Timers in `ak.timers={laser,sticky,slow,x2,shield}` decay by `ms` in `update()` (like SI `g.timers`); HUD `akEffects` span shows active icons (🔥laser ⚡x2 🛡shield …).
-- [ ] 4.5 `laser` bolts: reuse SI bullet idea — 2 bolts `vy=-520` from paddle edges, break any brick incl armored, `sfx('laser')`.
+- [x] 4.1 Falling capsule `{x,y,type}`; paddle overlap → apply + `sfx('power')`; expires at `y>AH` or `age>18000`.
+- [x] 4.2 **Good powerups** (weights): expand (paddle `w=min(160,w+30)`, w2) · multiball (split each ball into 3, max 5 balls, w2) · laser (paddle fires 2 bolts up for 8s, breaks armored, w1) · sticky (catch & relaunch, 6s, w1) · slow (ball speed ×0.7 for 6s, w1) · x2 (score ×2 for 8s, w2) · life (+1, cap 5, w1) · shield (one free bounce below paddle, w1).
+- [x] 4.3 **Bad powerups** (rare, ~0.05, drawn with ⚠️ so player avoids): shrink (`w=max(50,w-25)`) · speed-up (×1.25 for 6s).
+- [x] 4.4 Timers in `ak.timers={laser,sticky,slow,x2,fast}` decay by `ms` in `update()` (like SI `g.timers`); HUD `akEffects` span shows active icons (🔥laser ×2x2 🐌slow ◎sticky 🛡shield).
+- [x] 4.5 `laser` bolts: 2 bolts `vy=-520` from paddle edges, break any brick incl armored, `sfx('laser')`.
 
 **Acceptance criteria:** capsules fall and are caught; each type visibly changes gameplay; timers expire; HUD lists active effects; bad ones punish.
 

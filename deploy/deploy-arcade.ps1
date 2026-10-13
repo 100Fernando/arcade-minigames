@@ -32,9 +32,12 @@ ssh $VPS "mkdir -p $WEBROOT"
 #    it, but keep the served bytes identical to the repo for SHA comparisons)
 foreach ($f in $FILES) {
   scp "$f" "${VPS}:$WEBROOT/"
-  ssh $VPS "sed -i 's/\r\$//' $WEBROOT/$f"
+  # NOTE: 's/\r\$//' is WRONG here - PowerShell turns \$ into a literal $ before bash
+  # sees it, so sed matches CR+"$" and never strips CRLF. 's/\r$//' is the form that
+  # survives both quoting layers (verified: served bytes then == git blob == raw).
+  ssh $VPS "sed -i 's/\r$//' $WEBROOT/$f"
 }
 
 # 3) stage + run the nginx finale
 scp "deploy/vps-arcade.sh" "${VPS}:/tmp/"
-ssh -t $VPS "sed -i 's/\r\$//' /tmp/vps-arcade.sh; chmod +x /tmp/vps-arcade.sh; bash /tmp/vps-arcade.sh"
+ssh -t $VPS "sed -i 's/\r$//' /tmp/vps-arcade.sh; chmod +x /tmp/vps-arcade.sh; bash /tmp/vps-arcade.sh"

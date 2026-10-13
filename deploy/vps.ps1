@@ -19,7 +19,7 @@ $VPS = "ferramox-vps"   # alias in ~/.ssh/config -> root@51.79.39.178 (key auth)
 if ($upload) {
   scp "deploy/$upload" "${VPS}:/tmp/"
   $base = ($upload -replace '\.sh$','')
-  ssh $VPS "sed -i 's/\r\$//' /tmp/$upload; chmod +x /tmp/$upload; bash /tmp/$upload"
+  ssh $VPS "sed -i 's/\r$//' /tmp/$upload; chmod +x /tmp/$upload; bash /tmp/$upload"
   return
 }
 

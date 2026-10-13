@@ -21,4 +21,4 @@ $VPS  = "ferramox-vps"   # alias in ~/.ssh/config -> root@51.79.39.178 (key auth
 scp "deploy/$script" "${VPS}:/tmp/"
 
 # 2) one ssh call = zero password prompts (sed strips any CRLF that Windows added)
-ssh -t $VPS "sed -i 's/\r\$//' /tmp/$script; chmod +x /tmp/$script; bash /tmp/$script"
+ssh -t $VPS "sed -i 's/\r$//' /tmp/$script; chmod +x /tmp/$script; bash /tmp/$script"

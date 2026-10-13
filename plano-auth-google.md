@@ -151,6 +151,13 @@ option de logout. se não, solicitar login."*
       subject to COOP). After the fix the COOP error disappears on the live Pages origin; the only remaining
       console line is `Not signed in with the identity provider.` = the browser profile has no Google session
       (not a code fault). commit `4958a65`.
+- [x] F.8 **The rendered button was the real COOP source (not One Tap):** `data-use_fedcm_for_prompt` only
+      switches **One Tap** to FedCM. `renderButton` always returns the credential via a cross-frame
+      `postMessage`, and Google's frame sets `COOP: same-origin` — GitHub Pages cannot override that, so the
+      button is **unfixable on Pages** and was the source of the error. Fix: **remove `renderButton`** and rely
+      on FedCM One Tap (the card floats top-right when the browser has a Google session). commit `076e73b`.
+      Verified live on Pages (`?v=nobtn`): COOP error gone; only `Not signed in with the identity provider.`
+      remains (no Google session in the profile).
 
 **Acceptance:** with Google configured the player never types a name; signed-in state shows greeting + name +
 photo + logout; signed-out state shows a login option; the public board still shows **name only**.

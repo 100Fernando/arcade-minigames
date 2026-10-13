@@ -101,13 +101,29 @@ New file **`mp-client.js`** (loaded after `script.js`/`ranking.js`), own IIFE, p
 
 ---
 
+## Phase 5 — Performance (the ~2 fps problem, fixed 2026-10-13)
+
+**Symptom:** the match ran but crawled at ~1–2 fps — unplayable. Root cause was NOT the sim (the VPS steps at 20 Hz fine, `test-mp.js` 25/25) nor the payload (snapshots ~700 bytes). It was the **request pattern**:
+
+1. **Sequential latency.** The old loop did `await tick(); draw(); setTimeout(step, 250)` — the ~140 ms round trip (VPS is in France, players in Brazil) was paid **on top of** the 250 ms sleep, so each poll took ~400 ms → **2.5 fps**. Measured: state-request gaps were ~400 ms, not 250.
+2. **Double round trips.** Input was a separate `POST /api/mp/input` with `Content-Type: application/json` → a **CORS preflight** (OPTIONS) before every input POST. Two network trips per poll.
+
+**Fixes (all client-side + a tiny server addition, sim untouched):**
+- [x] 5.1 **Start-to-start polling** (`mp-client.js`): schedule the next poll from a running `next += POLL_MS` clock, so a 140 ms request inside a 120 ms slot costs **zero** extra delay. Poll rate now tracks the network (~140–160 ms ≈ 7 polls/s) instead of `latency + 250`.
+- [x] 5.2 **Input rides on the state GET** (`?code=&seat=&mx=&my=&fire=`). A GET with no body and no custom headers is a *simple* CORS request → **no preflight**, one round trip per poll. `server.js` `/api/mp/state` now calls `applyInput` when those params are present. `POST /api/mp/input` kept for back-compat (test-mp.js still uses it).
+- [x] 5.3 **Interpolated 60 fps render** (`mp-client.js`): the canvas repaints on `requestAnimationFrame`, blending the previous snapshot into the current one (`lerpSnap`, entities matched by index/seat/type with a max-delta guard so a respawn never streaks across the screen). 20 Hz sim + ~7 Hz poll now *looks* like a smooth 60 fps game. HUD redraw decoupled (only on tick/status change) so it stops thrashing the DOM every frame.
+
+**Verified (2026-10-13):** `node --check` clean, `get_errors` clean, `test-mp.js` 25/25, new `test-state-input.js` 4/4 (input-on-GET moves the ship + spawns a bullet). Live on `https://ferramox.duckdns.org/arcade/`: canvas draw rate went from ~2.5 fps to **~187 fillRect/s** (rAF-driven), state-request gaps ~140–160 ms, pixel bands green (own ship `rgb(0,255,136)` + fleet `rgb(255,51,102)` present), console clean.
+
+---
+
 ## File touch map
 
 | File | Change |
 |------|--------|
 | `si-sim.js` | **new** — the shared simulation (server + browser), the single source of truth |
-| `mp-client.js` | **new** — lobby, join, polling renderer, PC + mobile input, result panel |
-| `server.js` | `GAMES` + `si_mp`; `/api/mp/*` routes; `ROOMS` Map + 20 Hz stepper + TTL sweeper |
+| `mp-client.js` | **new** — lobby, join, polling renderer, PC + mobile input, result panel; Phase 5: start-to-start poll + input-on-GET + interpolated rAF render |
+| `server.js` | `GAMES` + `si_mp`; `/api/mp/*` routes; `ROOMS` Map + 20 Hz stepper + TTL sweeper; Phase 5: `/api/mp/state` applies `?seat=&mx=&my=&fire=` input |
 | `index.html` | `mpGameSection` block + `<script src="mp-client.js">` + `si-sim.js` |
 | `ranking.js` | `GAMES` + filter option for `si_mp` |
 | `styles.css` | `.mp-*` lobby/overlay (minor) |

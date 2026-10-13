@@ -26,7 +26,7 @@
 - [x] 0.3 VPS toolchain probed over SSH: **nginx/1.24.0 (Ubuntu)** · **node v18.19.1** · **npm 9.2.0** · **pm2 6.0.8**.
 - [ ] 0.4 **certbot NOT installed** (`certbot: command not found`) and `/etc/letsencrypt/certificates` is empty → HTTPS does not exist yet: `https://ferramox.duckdns.org/` → `000` (TLS refused), `http://…/` → `200`.
 
-**⚠ Found during 0.3 (changes Phase 3):** the domain root is **already taken** — `/etc/nginx/sites-enabled/` contains a single site named **`frontend`** serving another app ("Casamento Graziele & Fernando", static HTML + `/static/js/main.*.js`). So Phase 3 must **not** replace that server block: add a **`location /api/` proxy only**, leaving every other path of the wedding site intact.
+**⚠ Found during 0.3 (changes Phase 3):** the domain root is **already taken** — `/etc/nginx/sites-enabled/` contains a single site named **`frontend`** serving another app ("Casamento Graziele & Fernando", static HTML + `/static/js/main.*.js`). Worse, its Express app owns the **whole `/api/*` namespace** (`GET /api/x` → `401 {"error":"Token não fornecido"}`). So Phase 3 must **not** replace that server block and must **not** use `/api/`: add a **`location /ranking-api/` proxy only**, leaving every other path of the wedding site intact.
 
 **Acceptance:** met except 0.4 — certbot install is the only outstanding prerequisite (done in Phase 3.6 order: nginx proxy first, then cert).
 
@@ -43,7 +43,7 @@ Introduce a single **API base** the frontend uses, defaulting to same-origin so 
 
 **Acceptance (verified 2026-10-12):** `node --check` clean on `ranking.js`/`script.js`/`server.js`, no lint errors. With `node server.js` on :8765 the page loads **live** boards (`🥥 FerramoX · 46040`, `🥦 Anônimo · 13150`) — the localhost rule keeps same-origin working. With the API unreachable all 4 boards show the fallback and **no console errors** (only the browser's own network log).
 
-**⚠ Note:** the base is **not live yet** — `https://ferramox.duckdns.org/ranking-api/api/health` 404s until Phase 3 adds the nginx proxy. Until then the Pages frontend shows "Ranking unavailable" (graceful, by design).
+**⚠ Note:** the base is **not live yet** — `https://ferramox.duckdns.org/ranking-api/api/health` → `000` (no cert) and `http://…/ranking-api/api/health` → `200` but returns the **wedding page HTML** (the Express app's catch-all). `getJson` then fails on `JSON.parse` → `null` → the board shows "Ranking unavailable", so the frontend is already graceful **before** Phase 3 exists. Verified live from a `file://` origin: all 4 boards fall back, **zero console errors**.
 
 ---
 
@@ -71,7 +71,7 @@ Inside the VPS shell, in this order (3.5 **before** 3.6 — certbot needs nginx 
 1. `scp server.js bootstrap.sql package.json deploy/nginx-api.conf root@51.79.39.178:/opt/ranking-api/` (then `npm install dotenv mysql2 jose` there) + write `/opt/ranking-api/.env` with the same keys as the local `.env`.
 2. `node server.js --ensure-table` → reconciles `google_users` + `ranking` (idempotent).
 3. `pm2 start server.js --name ranking-api` → node listens on `127.0.0.1:8765` (set `--max-old-space-size` if needed; keep `PORT=8765`).
-4. Paste the **prepared snippet** `deploy/nginx-api.conf` into `sites-enabled/frontend` **before** its `location /api/` (note the `proxy_pass http://127.0.0.1:8765/;` — bare `/`, since the browser already sends `/ranking-api/api/...`) → `nginx -t` → `systemctl restart nginx`.
+4. Paste the **prepared snippet** `deploy/nginx-api.conf` into `sites-enabled/frontend` **before** its `location /api/` (note the `proxy_pass http://127.0.0.1:8765/;` — bare `/`, since the browser already sends `/ranking-api/api/...`) → **first run `nginx -T | grep -n location`** to confirm the existing block has only prefix locations (a regex `location` like `location ~ ^/api` would win over our prefix and must be handled) → `nginx -t` → `systemctl restart nginx`.
 5. `apt-get install certbot` (missing, found in 0.4) → `certbot --certonly --webroot -w /var/www/html -d ferramox.duckdns.org` → point nginx at the cert so HTTPS answers.
 
 **Acceptance:** `curl https://ferramox.duckdns.org/ranking-api/api/health` → `{"ok":true,...}` **and** `curl http://ferramox.duckdns.org/` still returns the wedding page (regression check — the wedding app's own `/api/*` must stay intact).

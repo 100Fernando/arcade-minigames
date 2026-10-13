@@ -118,16 +118,14 @@
         // GSI requires initialize() BEFORE prompt(); without it Google logs
         // "Missing required parameter: client_id" and One Tap never renders.
         window.google.accounts.id.initialize({client_id: clientId});
-        // One Tap floats a card ONLY when the browser already has a Google session,
-        // so on a fresh profile nothing shows. Render a real button in the gate too:
-        // clicking it starts the same flow (credential -> onCredential -> /api/login),
-        // so the player gets an obvious option even with no prior session.
-        try{
-          const btnHost=document.createElement('div');
-          btnHost.className='google-btn';
-          if(box) box.appendChild(btnHost);
-          window.google.accounts.id.renderButton(btnHost, {theme:'filled_rounded', size:'large', text:'continue_with', shape:'rectangular_rounded'});
-        }catch(e){console.log('[login] renderButton unavailable — One Tap only');}
+        // NO renderButton here: the rendered button returns the credential to the
+        // page via a cross-frame postMessage, and Google's frame sets
+        // Cross-Origin-Opener-Policy: same-origin — GitHub Pages cannot override
+        // that, so the button always fails there ("...would block the window.postMessage
+        // call"). FedCM One Tap (enabled via data-use_fedcm_for_prompt on the loader)
+        // uses the browser's native credential API, which is not subject to COOP, so
+        // it is the only path that works on Pages. The card floats top-right when the
+        // browser has a Google session.
         window.google.accounts.id.prompt(onCredential);
       }catch(e){console.log('[login] One Tap unavailable — manual name kept');}
     };

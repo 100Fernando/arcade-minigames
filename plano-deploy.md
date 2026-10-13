@@ -60,7 +60,7 @@ Introduce a single **API base** the frontend uses, defaulting to same-origin so 
 
 ---
 
-## Phase 3 — Backend on VPS (nginx → node)  🟡 RUNNING (2026-10-12)
+## Phase 3 — Backend on VPS (nginx → node)  ✅ DONE (2026-10-13)
 
 **Gotcha found on the first run (fixed):** `node server.js --ensure-table` died with `ERR_REQUIRE_ESM` — **jose v6 is an ES Module and node 18 (the VPS) cannot `require()` it** (local node is **v24**, where `require()` of ESM works, which is why it never failed before). Fix in `server.js`: `let jose = null` + `ensureJose()` doing `await import('jose')` lazily (`false` = unavailable → `verifyToken` returns `null`). Verified locally: `node --check` clean and **`test-auth-token.js` 8/8 PASS** (`login: "google"`, forged→401, `/api/login`→uid 3, `/api/score`→`user_id: 3`, DB rows linked).
 
@@ -93,7 +93,60 @@ CERTBOT_EMAIL=you@example.com deploy\run-vps-deploy.ps1     # fully non-interact
 3. **Insert the proxy into `frontend`** (the catch-all IS the block that serves the domain — `server_name _` matches every host, and it's the only site). Use `location ^~ /ranking-api/ { proxy_pass http://127.0.0.1:8765/; ... }` — `^~` so no regex location can shadow it; bare `/` so `/ranking-api/api/health` → `:8765/api/health`. Do NOT match on the domain in `server_name` (it's `_`).
 4. `nginx -t` → `systemctl restart nginx` → verify the 4 points (health JSON over HTTPS, ranking board, wedding root 200, wedding `/api/x` 401).
 
-**What is GREEN today (do not redo):** Pages **live** (`https://100fernando.github.io/arcade-minigames/` → 200, Enforce HTTPS on). `server.js` jose fix committed + `test-auth-token.js` 8/8 PASS. VPS: `ranking-api` on pm2 (online, serving :8765), `--ensure-table` satisfied, certbot installed, cert likely present. Wedding regressions intact (root 200, `/api/x` 401). **Only the `/ranking-api/` proxy + HTTPS in nginx remain.**
+### ✅ Closed 2026-10-13 — fully autonomous, ZERO password prompts
+
+SSH is now **key-only**: `~/.ssh/config` has `Host ferramox-vps 51.79.39.178` → `User root`,
+`IdentityFile ~/.ssh/id_vps_ferramox` (ed25519, **no passphrase**), `PasswordAuthentication no`,
+`BatchMode yes`. The one-time `deploy\vps-keypair.ps1` bootstrap (one manual password, typed by the
+user in the terminal) installed the pubkey in `/root/.ssh/authorized_keys`. From then on:
+
+- `deploy\vps.ps1 "nginx -t; pm2 list"` → run any VPS command (never prompts; fails fast on auth loss)
+- `deploy\vps.ps1 -upload vps-ssl.sh` → scp a `deploy\` script to `/tmp`, strip CRLF, `chmod +x`, run it
+- `deploy\run-vps-deploy.ps1 [script]` → same, using the `ferramox-vps` alias
+
+The old `vps-fix.sh / vps-fix2..4.sh` chain is **superseded** — this run replaced it. What actually happened:
+
+1. **Backup pollution removed:** `rm /etc/nginx/sites-enabled/frontend.bak*` → only `frontend` is loaded,
+   so the `conflicting server_name "_"` warning is gone. Every backup this run takes goes to **`/tmp` only**.
+2. **certbot had no nginx plugin** (`Discovered plugins: manual,null,standalone,webroot`) → `--nginx`
+   silently did nothing. Fixed with `apt-get install -y python3-certbot-nginx`. ACME then served 200
+   (`location /.well-known/acme-challenge/ { alias /var/www/certbot/; }` was already in the block).
+3. **`certbot --nginx -d ferramox.duckdns.org --non-interactive --agree-tos --email fernando-klj@hotmail.com`**
+   → certificate **issued** (ECDSA, valid 89 days, `/etc/letsencrypt/live/ferramox.duckdns.org/`, renewal
+   cron installed). Its **installer** then refused: *"Could not automatically find a matching server block …
+   Set the `server_name` directive"* — because the block is the catch-all `server_name _`. Net effect:
+   **cert exists, but no `listen 443`**.
+4. **`deploy\vps-ssl.sh` finished it by hand, inside the SAME `frontend` block** (idempotent, `nginx -t`
+   guard + restore-on-failure, backups in `/tmp`): `listen [::]:443 ssl;` + `listen 443 ssl;` +
+   `ssl_certificate`/`ssl_certificate_key` → `/etc/letsencrypt/live/<dom>/fullchain.pem` and `privkey.pem`
+   (the earlier guess `certificates/<dom>.pem` does **not** exist and made nginx `emerg`), then
+   `location ^~ /ranking-api/ { proxy_pass http://127.0.0.1:8765/; … }` right after `server_name`.
+   The wedding `location /` and `location /api/` → `:3001` are **byte-identical** — both apps serve
+   off one block, which is exactly why the API lives under a separate `^~` prefix.
+
+**Acceptance — all green, checked from the VPS *and* from Windows:**
+
+| check | result |
+|---|---|
+| `https://ferramox.duckdns.org/ranking-api/api/health` | **200** `{"ok":true,"db":"estudo","table":"ranking","login":"off"}` |
+| `https://…/ranking-api/api/ranking?game=alvos&limit=3` | **200** `[{"name":"FerramoX",…29700},{"name":"Anônimo",…13150}]` |
+| `http://ferramox.duckdns.org/` (wedding) | **200** `<!doctype html>…` |
+| `https://ferramox.duckdns.org/` (wedding, new) | **200** |
+| `http://ferramox.duckdns.org/api/x` (wedding Express) | **401** `{"error":"Token não fornecido"}` |
+| CORS preflight from Pages origin | **204** + `Access-Control-Allow-Origin: *`, `GET,POST,OPTIONS`, `Content-Type` |
+| Pages | `https://100fernando.github.io/arcade-minigames/` → **200** |
+| pm2 | `casamento-backend` online **and** `ranking-api` online |
+
+**⚠ GOTCHA (certbot + catch-all):** with `server_name _` the certbot nginx **installer** can never edit
+this block, so HTTPS must be added by hand after `certbot --nginx` issues the cert. Re-running certbot
+later re-issues but still won't install; `deploy\vps-ssl.sh` is idempotent and adds nothing if `listen 443`
+is present. On renewal the `live/` symlinks update themselves — no config edit needed.
+
+**What is GREEN as of 2026-10-13 (do not redo):** the whole of Phase 3 — HTTPS + `/ranking-api/` proxy +
+both wedding regressions + CORS + Pages live. `ranking-api` and `casamento-backend` both online on pm2,
+served off the **same** nginx block (hence the separate `location ^~` prefix). SSH is key-only, so the
+assistant can drive the VPS with no user input. **Only Phase 4 remains** (Google login wiring — needs
+user-side Google Cloud Console work, cannot be automated).
 
 1. **3.1/3.2** stage `server.js` + `bootstrap.sql` + `package.json` + `.env` into `/opt/ranking-api` (`chmod 600` on `.env`, then `shred -u` the staged copy in `/tmp`), `npm install dotenv mysql2 jose`.
 2. **3.3** `node server.js --ensure-table` → reconciles `google_users` + `ranking`.

@@ -6,6 +6,7 @@ const fs = require('fs');
 const http = require('http');
 const mysql = require('mysql2');
 const dotenv = require('dotenv');
+const cryptoMod = require('crypto');
 // jose v6 calls globalThis.crypto (Web Crypto). Node 18 — the VPS — does NOT define
 // that global (it was added in Node 19), so jwtVerify throws "crypto is not defined"
 // and every token is rejected. Polyfill it from node:crypto's WebCrypto implementation
@@ -38,7 +39,7 @@ const TICK = 50;                 // 20 Hz fixed timestep
 const ROOM_LIFE_MS = 30 * 60 * 1000;   // a room nobody touches for 30 min is gone
 const MAX_ROOMS = 20;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I: codes get typed
-const rooms = new Map();         // code -> {code, world, hostIp, lastActivity, started}
+const rooms = new Map();         // code -> {code, world, hostIp, lastActivity, started, conns}
 
 // ---- Google OIDC: the client id is public, but it must match the token's aud ----
 // Both can be overridden from the real environment (used by test-auth-token.js);
@@ -157,7 +158,7 @@ function createRoom(ip, mode) {
   const code = newCode();
   if (!code) return null;
   const world = SiSim.create(mode);
-  const room = { code, world, hostIp: ip, lastActivity: Date.now(), started: 0 };
+  const room = { code, world, hostIp: ip, lastActivity: Date.now(), started: 0, conns: new Map() };
   rooms.set(code, room);
   return room;
 }
@@ -185,17 +186,134 @@ function lobbyList() {
 }
 // One stepper for every room: a throwing step must never take down the ranking
 // API, so each room is guarded separately and a broken room is dropped.
+// Phase 6: the same heartbeat PUSHES the fresh snapshot to every WebSocket
+// connected to the room, so clients never wait for a request round trip.
+function closeConns(r) {
+  if (!r.conns) return;
+  for (const sock of r.conns.keys()) { try { sock.destroy(); } catch (_) {} }
+  r.conns.clear();
+}
 setInterval(() => {
   const now = Date.now();
   for (const [code, r] of rooms) {
-    if (now - r.world.lastActivity > ROOM_LIFE_MS) { rooms.delete(code); continue; }
-    if (r.world.status !== 'live') continue;
-    try { SiSim.step(r.world, TICK); } catch (e) {
-      console.log('[mp] room ' + code + ' step failed: ' + (e.message || e) + ' -> dropped');
-      rooms.delete(code);
+    if (now - r.world.lastActivity > ROOM_LIFE_MS) { closeConns(r); rooms.delete(code); continue; }
+    if (r.world.status === 'live') {
+      try { SiSim.step(r.world, TICK); } catch (e) {
+        console.log('[mp] room ' + code + ' step failed: ' + (e.message || e) + ' -> dropped');
+        closeConns(r); rooms.delete(code); continue;
+      }
+    }
+    if (r.conns && r.conns.size) {
+      touch(r.world); // a room with live sockets is alive, whatever the input
+      let payload; // one snapshot per room per tick, shared by every socket
+      for (const sock of r.conns.keys()) {
+        try {
+          if (payload === undefined) payload = JSON.stringify(SiSim.snapshot(r.world));
+          wsSendText(sock, payload);
+        } catch (e) { try { sock.destroy(); } catch (_) {} r.conns.delete(sock); }
+      }
     }
   }
 }, TICK);
+
+// ---- Phase 6: WebSocket room transport (zero dependencies) ----
+// HTTP polling (Phase 5) pays a full round trip per poll - measured 150 ms to 2 s
+// from Brazil to this box - which is exactly the "controls respond late" problem.
+// A WebSocket is ONE persistent connection: the server PUSHES a snapshot every
+// tick and the client SENDS input fire-and-forget, so input lag collapses to the
+// sim tick. Node 18 emits 'upgrade' natively and the framing below is plain RFC
+// 645541 - the VPS has no `ws` package and must not need one.
+const WSGUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+
+function wsSendText(sock, str) {
+  const p = Buffer.from(str, 'utf8');
+  let head;
+  if (p.length < 126) head = Buffer.from([0x81, p.length]);
+  else if (p.length < 65536) head = Buffer.from([0x81, 126, p.length >> 8, p.length & 255]);
+  else {
+    head = Buffer.alloc(10);
+    head[0] = 0x81; head[1] = 127;
+    head.writeBigInt64BE(BigInt(p.length), 2);
+  }
+  sock.write(head);
+  sock.write(p);
+}
+
+// Incremental frame reader for the client->server direction (browsers ALWAYS mask).
+function makeWsParser(onMsg, onClose) {
+  let buf = Buffer.alloc(0);
+  return (chunk) => {
+    buf = chunk ? Buffer.concat([buf, chunk]) : buf;
+    for (;;) {
+      if (buf.length < 2) return;
+      const opcode = buf[0] & 0x0f;
+      const masked = (buf[1] & 0x80) !== 0;
+      let len = buf[1] & 0x7f, off = 2;
+      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); off = 4; }
+      else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); off = 10; }
+      let mask = null;
+      if (masked) { if (buf.length < off + 4) return; mask = buf.slice(off, off + 4); off += 4; }
+      if (buf.length < off + len) return;
+      let payload = buf.slice(off, off + len);
+      if (masked) {
+        const out = Buffer.alloc(len);
+        for (let i = 0; i < len; i++) out[i] = payload[i] ^ mask[i & 3];
+        payload = out;
+      }
+      buf = buf.slice(off + len);
+      if (opcode === 1) onMsg(payload.toString('utf8'));
+      else if (opcode === 8) { onClose(); return; }
+      // ping(9)/pong(10)/unknown: ignore
+    }
+  };
+}
+
+function mpUpgrade(req, sock, head) {
+  const amp = req.url.indexOf('?');
+  const qs = {};
+  if (amp >= 0) for (const p of req.url.slice(amp + 1).split('&')) if (p) { const [k, v] = p.split('='); qs[k] = decodeURIComponent(v || ''); }
+  const room = findRoom(qs.code);
+  const key = req.headers['sec-websocket-key'];
+  if (!room || !key || !room.conns) {
+    sock.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    try { sock.destroy(); } catch (_) {}
+    return;
+  }
+  if (room.conns.size >= 4) { // one socket per seat, like the HTTP seats
+    sock.write('HTTP/1.1 408 Conflict\r\nConnection: close\r\n\r\n');
+    try { sock.destroy(); } catch (_) {}
+    return;
+  }
+  const accept = cryptoMod.createHash('sha1').update(key + WSGUID).digest('base64');
+  sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n');
+  const conn = { sock, seat: -1 };
+  const feed = makeWsParser((msg) => {
+    // Input arrives fire-and-forget: {"s":seat,"i":[mx,my,fire01]}. Nothing is
+    // awaited - the snapshot push IS the ack - which is what kills the input lag.
+    let d;
+    try { d = JSON.parse(msg); } catch (_) { return; }
+    if (!d) return;
+    if (d.s != null) {
+      const s = Number(d.s);
+      if (Number.isInteger(s) && s >= 0 && s < room.world.players.length) conn.seat = s;
+    }
+    if (d.i && Number.isInteger(conn.seat) && conn.seat >= 0) {
+      SiSim.applyInput(room.world, conn.seat, d.i[0], d.i[1], d.i[2]);
+      touch(room.world);
+    }
+  }, () => {
+    try { sock.destroy(); } catch (_) {}
+    room.conns.delete(sock);
+  });
+  conn.seat = -1;
+  room.conns.set(sock, conn);
+  sock.on('error', () => room.conns.delete(sock));
+  sock.on('close', () => room.conns.delete(sock));
+  if (head && head.length) feed(head);
+  sock.on('data', feed);
+  // first snapshot right away so the client renders before its first poll would
+  try { wsSendText(sock, JSON.stringify(SiSim.snapshot(room.world))); } catch (_) {}
+}
 
 function mpHandle(path, req, rq, body, qs) {
   if (path === '/api/mp/health') return json(rq, { ok: true, rooms: rooms.size, tick: TICK });
@@ -464,6 +582,8 @@ function handle(req, rq) {
     }
     process.exit(0);
   }
-  http.createServer(handle).listen(PORT);
+  const srv = http.createServer(handle);
+  srv.on('upgrade', mpUpgrade); // WebSocket transport for /api/mp/ws (Phase 6)
+  srv.listen(PORT);
   console.log('serving http://localhost:' + PORT + '  (db: ' + DB.database + '@' + DB.host + ')');
 })();

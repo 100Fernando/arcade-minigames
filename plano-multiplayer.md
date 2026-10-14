@@ -117,6 +117,40 @@ New file **`mp-client.js`** (loaded after `script.js`/`ranking.js`), own IIFE, p
 
 ---
 
+## Phase 6 — Input lag (the "responds late after commands" problem, 2026-10-14)
+
+### Analysis (measured, not guessed)
+
+**Symptom:** the match renders smoothly (Phase 5 fixed fps) but the ship reacts ~0.5–2 s after a key/stick press — players give up because dodging feels impossible.
+
+**Root cause — the architecture is still request/response over slow HTTP:**
+
+1. **Input is a round trip.** Every command travels to the VPS and waits for the response: `mp-client.js` polls `GET /api/mp/state?...&mx=&my=&fire=` every 120 ms. The ship only moves once the server has *received* that input. So input lag ≈ **poll interval + one full network round trip**.
+2. **The round trip is much worse than assumed.** Measured from Windows today: first request 2.2 s, second 4.7 s, steady state 130–530 ms. nginx keeps `Connection: keep-alive` but the browser still pays a fresh **TLS handshake per burst** (no `keepalive` directive in the `/ranking-api/` block → nginx closes idle upstreams), and the box is in France while players are in Brazil. Phase 5 assumed ~140 ms; reality spikes to 500 ms–2 s.
+3. **No own-client prediction.** The client never simulates its own ship, so a key press can never take effect before the network answers. This is the textbook fix for network-action games and it is missing.
+
+**Technology audit:**
+
+| Layer | Current | Verdict |
+|-------|---------|---------|
+| Sim | server-authoritative 20 Hz (`si-sim.js`) | ✅ keep — single source of truth, no cross-device determinism needed |
+| Transport | HTTP polling, input rides on GET | ❌ latency-bound; **WebSocket push** is the right upgrade: one persistent connection, server PUSHES snapshots (~20/s), client SENDS input fire-and-forget (no waiting) → input lag ≈ sim tick (50 ms) |
+| nginx | `/ranking-api/` proxy without upgrade mapping | ❌ must add `map $http_upgrade` + `proxy_set_header Upgrade/Connection` (one-time VPS edit, wedding app untouched) |
+| Client render | rAF + `lerpSnap` interpolation | ✅ keep — becomes the smoothing between pushed snapshots |
+| Fallback | none | must keep the HTTP polling path (Phase 5) as automatic fallback if the WS fails (proxy blocks it, extension, flaky net) — game must degrade, never die |
+
+**Alternatives considered:** WebRTC (overkill, no STUN/TURN needed for text state), RTMP/long-poll (same latency class), moving the sim client-side (breaks the single-source-of-truth rule + desync risk). WS push + client-side own-ship prediction is the standard "lag compensation" architecture and needs **zero new dependencies** (Node 18 `upgrade` event + hand-rolled RFC645541 frames, verified by `probe-upgrade.js`).
+
+### Plan (execute one at a time, verify each)
+
+- [x] 6.0 Probe: Node emits `upgrade` with no dependency (`probe-upgrade.js` → PASS).
+- [ ] 6.1 `server.js`: WebSocket room transport — `GET /api/mp/ws?code=XXXX` upgrades; server PUSHES `snapshot` every 50 ms tick (only when ≥1 socket connected), accepts `{i:[mx,my,fire],s:seat}` messages fire-and-forget; per-socket seat binding; TTL/limits identical to HTTP path.
+- [ ] 6.2 `mp-client.js`: WS transport — on create/join, open the socket; input sent immediately (no await); snapshots received push-based; **own-ship prediction** (client applies its own input locally between snapshots so a press acts at once, server snapshot corrects); keep HTTP polling loop as automatic fallback when the socket errors/closes.
+- [ ] 6.3 nginx on VPS: add `map $http_upgrade $connection_upgrade` + upgrade headers to the `/ranking-api/` location (idempotent script, `nginx -t` guard, wedding + ranking regressions re-checked).
+- [ ] 6.4 Tests: `test-ws.js` (node, hand-rolled client): create→join→ws→start→input msg→tick advances→snapshot push→seat sync; `test-mp.js` + `test-state-input.js` still green (HTTP path untouched).
+- [ ] 6.5 Deploy: scp `server.js` → `/opt/ranking-api` + `pm2 restart`; run nginx upgrade script; push `mp-client.js` to `/var/www/arcade` + Pages; live verify two browser pages on the same room, measure input→response delay < 150 ms.
+- [ ] 6.6 `git commit` + push; SHA-match check per the Pages gotcha.
+
 ## File touch map
 
 | File | Change |

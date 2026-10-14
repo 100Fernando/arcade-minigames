@@ -81,7 +81,7 @@
 
   // ---------------------------------------------------------------- state
   let myCode = null, mySeat = -1, myName = '';
-  let snap = null, prevSnap = null, snapAt = 0, lastTick = -1, lastStatus = '', connLost = false;
+  let snap = null, prevSnap = null, snapAt = 0, snapGap = 120, lastTick = -1, lastStatus = '', connLost = false;
   let pollTimer = null, lobbyTimer = null, startedAt = 0;
   let running = false;
 
@@ -193,12 +193,25 @@
 
   // ---------------------------------------------------------------- input
   const keys = { left: false, right: false, up: false, down: false, shoot: false };
+  // A key/stick change is pushed to the socket the instant it happens (throttled
+  // to 40 ms), so the server sees the command at press time - not at poll time.
+  let lastSentInput = 0;
+  function sendInputNow() {
+    if (!wsSock || mySeat < 0) return;
+    const now = Date.now();
+    if (now - lastSentInput < 40) return;
+    lastSentInput = now;
+    const inp = currentInput();
+    try { wsSock.send(JSON.stringify({ s: mySeat, i: [inp.mx, inp.my, inp.fire ? 1 : 0] })); }
+    catch (_) {}
+  }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = true;
     if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') keys.right = true;
     if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') keys.up = true;
     if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') keys.down = true;
     if (e.key === ' ') keys.shoot = true;
+    sendInputNow();
   });
   document.addEventListener('keyup', (e) => {
     if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = false;
@@ -206,6 +219,7 @@
     if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') keys.up = false;
     if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') keys.down = false;
     if (e.key === ' ') keys.shoot = false;
+    sendInputNow();
   });
 
   // Mobile: analog stick in a fixed zone LEFT of the fire button, so the finger
@@ -274,6 +288,22 @@
   }
 
   // ---------------------------------------------------------------- loop
+  function handleSnapshot(s) {
+    connLost = false;
+    const now = Date.now();
+    snapGap = snapAt ? Math.min(400, now - snapAt) : POLL_MS; // push arrives every 50 ms, polling every ~150
+    prevSnap = snap; snap = s; snapAt = now;
+    if (s.t !== lastTick || s.st !== lastStatus) { lastTick = s.t; lastStatus = s.st; drawHud(s); }
+
+    // Auto-start: the host opens the match once 4 seats are in, or after 20 s.
+    if (s.st === 'waiting' && mySeat === 0) {
+      const seats = (s.ps || []).length;
+      if (seats >= 4 || Date.now() - startedAt > 20000) doStart();
+    }
+
+    if (s.st === 'over') endMatch(s);
+  }
+
   async function tick() {
     if (!myCode) return;
     // Input travels ON the state request: the server applies it and answers with the
@@ -286,42 +316,76 @@
       if (snap) connLost = true;             // keep the last frame, say so
       return;
     }
-    connLost = false;
-    prevSnap = snap; snap = s; snapAt = Date.now();
-    if (s.t !== lastTick || s.st !== lastStatus) { lastTick = s.t; lastStatus = s.st; drawHud(s); }
-
-    // Auto-start: the host opens the match once 4 seats are in, or after 20 s.
-    if (s.st === 'waiting' && mySeat === 0) {
-      const seats = (s.ps || []).length;
-      if (seats >= 4 || Date.now() - startedAt > 20000) doStart();
-    }
-
-    if (s.st === 'over') endMatch(s);
+    handleSnapshot(s);
   }
 
-  function startLobby() {
-    if (lobbyTimer) return;
-    const lobbyStep = async () => { await refreshLobby(); lobbyTimer = setTimeout(lobbyStep, 3000); };
-    lobbyStep();
-  }
-  function startLoop() {
-    if (pollTimer) return;
-    running = true;
-    // Start-to-start scheduling: a 140 ms request inside a 120 ms slot costs ZERO extra
-    // delay, so the poll rate tracks the network instead of paying for it twice.
-    let next = Date.now();
-    const step = async () => {
-      if (!running) return;
-      await tick();
-      next += POLL_MS;
-      const now = Date.now();
-      if (next < now) next = now;            // a slow request skips, it never drifts
-      pollTimer = setTimeout(step, next - now);
+  // ---------------------------------------------------------------- Phase 6: WS transport
+  // HTTP polling (Phase 5) pays a full round trip per poll - measured 150 ms to 2 s
+  // from Brazil to this box - which is exactly the "controls respond late" problem.
+  // A WebSocket is ONE persistent connection: the server PUSHES a snapshot every
+  // tick (20 Hz) and the client SENDS input fire-and-forget, so input lag collapses
+  // to the sim tick. If the socket cannot open (proxy without upgrade mapping, an
+  // extension, a flaky network) the polling loop below takes over automatically.
+  let wsSock = null, wsAlive = false, wsInputTimer = null;
+
+  function openSocket() {
+    if (!myCode || wsSock) return;
+    const base = API() || (location.protocol + '://' + location.host);
+    let url;
+    try { url = base.replace(/^http/, 'ws') + '/api/mp/ws?code=' + encodeURIComponent(myCode); }
+    catch (_) { return; }
+    let sock;
+    try { sock = new WebSocket(url); } catch (_) { return; }
+    wsSock = sock; wsAlive = true;
+
+    sock.addEventListener('message', (ev) => {
+      let s;
+      try { s = JSON.parse(ev.data); } catch (_) { return; }
+      if (s && s.ok !== false && (s.ps || s.st)) handleSnapshot(s);
+    });
+    const drop = () => {
+      if (wsSock !== sock) return;
+      wsSock = null; wsAlive = false;
+      if (wsInputTimer) { clearInterval(wsInputTimer); wsInputTimer = null; }
+      // The socket died mid-match: fall back to the polling path, never die.
+      if (running && myCode) startPolling();
     };
+    sock.addEventListener('error', drop);
+    sock.addEventListener('close', drop);
+
+    // Input rides every 150 ms whether or not it changed - the server also uses
+    // lastInput to mark idle seats offline, so a held-still player must stay alive.
+    wsInputTimer = setInterval(() => {
+      if (!wsAlive || !wsSock || mySeat < 0) return;
+      const inp = currentInput();
+      try { wsSock.send(JSON.stringify({ s: mySeat, i: [inp.mx, inp.my, inp.fire ? 1 : 0] })); }
+      catch (_) { drop(); }
+    }, 150);
+  }
+
+  function startPolling() {
+    if (pollTimer || wsSock) return;
+    const step = async () => {
+      if (!running || wsSock) return;
+      await tick();
+      const now = Date.now();
+      pollTimer = setTimeout(step, Math.max(0, (next += POLL_MS) - now));
+    };
+    let next = Date.now();
     step();
-    // Rendering is decoupled from polling: the canvas repaints at the display refresh
-    // rate, interpolating between the last two snapshots. 20 Hz sim + 8 Hz poll still
-    // looks like a 60 fps game.
+  }
+
+  function startLoop() {
+    if (running) return;
+    running = true;
+    // Preferred transport: one persistent socket, push snapshots + send input.
+    openSocket();
+    // If the socket never opened (no WebSocket in this context, proxy refused the
+    // upgrade), the polling path is the fallback - it is what Phase 5 made playable.
+    if (!wsSock) startPolling();
+    // Rendering is decoupled from transport: the canvas repaints at the display
+    // refresh rate, interpolating between the last two snapshots. 20 Hz sim +
+    // push or poll still looks like a 60 fps game whatever the network does.
     const frame = () => {
       if (!running) return;
       drawFrame();
@@ -332,6 +396,8 @@
   function stopLoop() {
     running = false;
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    if (wsInputTimer) { clearInterval(wsInputTimer); wsInputTimer = null; }
+    if (wsSock) { try { wsSock.close(); } catch (_) {} wsSock = null; wsAlive = false; }
   }
 
   // ---------------------------------------------------------------- HUD
@@ -510,8 +576,30 @@
     const now = Date.now();
     if (msgTimer > 0) msgTimer -= lastFrame ? now - lastFrame : 0;
     lastFrame = now;
-    const t = prevSnap && snap ? (now - snapAt) / POLL_MS : 0;
-    draw(t > 0 ? lerpSnap(prevSnap, snap, t) : snap);
+    const t = prevSnap && snap ? (now - snapAt) / snapGap : 0;
+    const view = t > 0 ? lerpSnap(prevSnap, snap, t) : snap;
+    if (view !== snap) predictOwn(view, now);   // never mutate the stored snapshot
+    draw(view);
+  }
+
+  // Own-ship prediction (client-side lag compensation): the server has the input
+  // but the snapshot carrying its effect is still in flight, so between snapshots
+  // the client extrapolates ITS OWN ship using the input it already sent. The
+  // server's next snapshot is authoritative and corrects any drift. Only the
+  // local ship is predicted - the other three come from the shared world.
+  function predictOwn(view, now) {
+    if (!view || !view.ps || mySeat < 0) return;
+    if (!wsAlive) return;                       // polling path already waits for the server
+    const dt = Math.min(0.25, (now - snapAt) / 1000);
+    if (dt <= 0.02) return;
+    const inp = currentInput();
+    for (const p of view.ps) {
+      if (p[0] !== mySeat) continue;
+      if (!p[6]) return;                        // dead/respawning: nothing to move
+      const speed = 250 * (p[10] || 1);
+      p[2] = Math.max(0, Math.min(500 - 40, p[2] + inp.mx * speed * dt));
+      p[3] = Math.max(600 * 0.45, Math.min(600 - 20, p[3] + inp.my * speed * dt));
+    }
   }
 
   function endMatch(s) {

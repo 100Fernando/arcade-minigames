@@ -4,7 +4,7 @@
 
 **Rule:** implement one phase at a time; update this file after each one. Never break the single-player games (`si`, `alvos`, `arkanoid`).
 
-**Status:** � Complete — Phases 0–4 implemented and verified (2026-10-13): `test-mp.js` 25/25 PASS, two browser pages synced on the same `tick`, live on `https://ferramox.duckdns.org/arcade/` (SHA-matched).
+**Status:** � Complete — Phases 0–7 implemented and verified. Phase 7 (2026-10-14) found + fixed the REAL input-lag bug (client silently fell back to 190 ms polling while the WS socket was alive; + nginx `proxy_buffering off`). `test-mp.js` 25/25, `test-ws.js` 8/8, `test-state-input.js` 4/4; live browser now shows **0 polling GETs alongside the socket**. Residual ~180 ms = irreducible Brazil↔France wire, not a bug.
 
 ---
 
@@ -150,6 +150,46 @@ New file **`mp-client.js`** (loaded after `script.js`/`ranking.js`), own IIFE, p
 - [x] 6.4 Tests: `test-ws.js` (node, hand-rolled client) **8/8 PASS** (upgrade 101, pushed snapshot with no GET, input msg moves ship, fire spawns bullets, 20 Hz push, HTTP path still ok with a socket open); `test-mp.js` **25/25**, `test-state-input.js` **4/4** (HTTP path untouched).
 - [x] 6.5 Deploy: scp `server.js` → `/opt/ranking-api` + `pm2 restart` (health 200, ws upgrade reaches node = 400 on unknown code); `vps-ws.sh` nginx upgrade; scp `mp-client.js` → `/var/www/arcade` (SHA `9d108428…` == repo). Live probe `probe-live-ws.js`: **101 upgrade, 31 pushes in 1.5 s (~20 Hz), input moved ship 60→398** through nginx on the real box.
 - [x] 6.6 `git commit` + push (cf20c2d); VPS arcade SHA matches repo; Pages SHA pending propagation (known `max-age=600` gotcha — re-check with curl, not a tab reload).
+
+## Phase 7 — the REAL input-lag bug (found + fixed 2026-10-14)
+
+Phase 6 shipped the WS transport, but users STILL reported terrible input lag +
+"can't see what the other player did". Measured, not guessed:
+
+**Isolation ladder (probe-input-lag.js, `--local` = no nginx):**
+| Path | INPUT LAG | CROSS VIEW | PUSH RATE |
+|------|-----------|------------|-----------|
+| node direct, local box | 15–32 ms | 16–32 ms | 20 Hz |
+| node direct, ON the VPS | 15–58 ms | 17–59 ms | 20 Hz |
+| through nginx (public URL) | 170–190 ms | 170–190 ms | 20 Hz |
+| TLS+TTFB leg Brazil→box | cold 450 ms, spikes 5.7 s | — | — |
+
+So node 18 + the box + the sim are all fine. Two real culprits:
+
+1. **nginx buffering.** `proxy_request_buffering on` (default) holds each client
+   WS frame in a 16 k buffer before it reaches node; `proxy_buffering on` holds
+   the pushed snapshots too. Fix = `deploy/vps-ws2.sh` adds `proxy_buffering off`
+   + `proxy_request_buffering off` inside the `/ranking-api/` location only
+   (idempotent, `nginx -t` guard, wedding + ranking + arcade regressions green).
+2. **THE ACTUAL BUG — client fell back to polling while the socket was alive.**
+   `openSocket()` started a 150 ms `wsInputTimer` right after `new WebSocket(url)`.
+   Over the real wire the TLS handshake is ~450 ms, so the FIRST send throws
+   (socket still CONNECTING) → `catch → drop()` → `wsSock=null` → `startPolling()`.
+   Result: the socket kept pushing (so it *looked* alive) but input only travelled
+   via 190 ms GETs, and BOTH transports ran at once (measured: 390 pushes AND 136
+   state GETs in 23 s, stack = `tick ← step ← setTimeout` from `startPolling`).
+   Locally the handshake is ~1 ms so no test ever caught it.
+   Fix (`mp-client.js`): gate every send on `wsOpen` (set by the `open` event OR
+   the first pushed message); a send failure only calls `drop()` if `wsOpen` was
+   already true; input interval 150→60 ms. Verified in-browser after deploy:
+   **116 pushes in 7.6 s, 0 state GETs** (polling no longer runs alongside the socket).
+
+**Residual ~180 ms is now irreducible physics**, not a bug: the VPS is in France,
+players in Brazil — one network leg is ~150–450 ms. The client's own ship is
+predicted locally (`predictOwn`) so *your* ship responds instantly; the OTHER
+players' ships can only be seen after one wire leg. To cut that further you must
+physically move the server closer to the players (or run the sim in the browser).
+Node version / Python / libraries are NOT the issue — verified node 18 direct = 15 ms.
 
 ## File touch map
 

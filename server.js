@@ -157,7 +157,10 @@ function createRoom(ip, mode) {
   if (rooms.size >= MAX_ROOMS) return null;
   const code = newCode();
   if (!code) return null;
-  const world = SiSim.create(mode);
+  // Seed the world so the client can rebuild the EXACT same deterministic sim
+  // locally (rollback netcode). The seed is public (it only fixes the random
+  // stream, not fairness) and travels in the create/join/start snapshot.
+  const world = SiSim.create(mode, (Math.random() * 0xFFFFFFFF) | 1);
   const room = { code, world, hostIp: ip, lastActivity: Date.now(), started: 0, conns: new Map() };
   rooms.set(code, room);
   return room;
@@ -205,10 +208,19 @@ setInterval(() => {
     }
     if (r.conns && r.conns.size) {
       touch(r.world); // a room with live sockets is alive, whatever the input
+      // Rollback netcode: the client runs the SAME sim locally and needs the
+      // AUTHORITATIVE input each seat used on THIS tick to correct its
+      // prediction. Capture the per-seat inputs the world is about to step with,
+      // then push them with the snapshot so the client can roll back on a
+      // misprediction. `i` is [mx,my,fire01] per seat, in seat order.
       let payload; // one snapshot per room per tick, shared by every socket
       for (const sock of r.conns.keys()) {
         try {
-          if (payload === undefined) payload = JSON.stringify(SiSim.snapshot(r.world));
+          if (payload === undefined) {
+            const snap = SiSim.snapshot(r.world);
+            snap.i = r.world.players.map((p) => [p.mx, p.my, p.fire ? 1 : 0]);
+            payload = JSON.stringify(snap);
+          }
           wsSendText(sock, payload);
         } catch (e) { try { sock.destroy(); } catch (_) {} r.conns.delete(sock); }
       }

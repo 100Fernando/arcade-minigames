@@ -18,7 +18,7 @@ param([switch]$show)
 $ErrorStrict = $true
 $VPS = "ferramox-vps"   # alias -> root@51.79.39.178 (key auth)
 $WEBROOT = "/var/www/arcade"
-$FILES = @("index.html","styles.css","script.js","ranking.js","audio.js","aventura-mobile.js","mp-client.js")
+$FILES = @("index.html","styles.css","script.js","ranking.js","audio.js","aventura-mobile.js","mp-client.js","si-sim.js")
 
 if ($show) {
   ssh $VPS "curl -sk -m 10 -o /dev/null -w 'arcade=%{http_code}\n' https://ferramox.duckdns.org/arcade/; curl -sk -m 10 -D - -o /dev/null https://ferramox.duckdns.org/arcade/ | grep -i cross-origin-opener-policy; ls -1 $WEBROOT"

@@ -319,13 +319,116 @@
     handleSnapshot(s);
   }
 
-  // ---------------------------------------------------------------- Phase 6: WS transport
-  // HTTP polling (Phase 5) pays a full round trip per poll - measured 150 ms to 2 s
-  // from Brazil to this box - which is exactly the "controls respond late" problem.
-  // A WebSocket is ONE persistent connection: the server PUSHES a snapshot every
-  // tick (20 Hz) and the client SENDS input fire-and-forget, so input lag collapses
-  // to the sim tick. If the socket cannot open (proxy without upgrade mapping, an
-  // extension, a flaky network) the polling loop below takes over automatically.
+  // ---------------------------------------------------------------- Phase 9: rollback netcode
+  // The authoritative sim lives on the USA/France box, but the PLAYERS live in
+  // Brazil. So the browser runs the SAME deterministic sim LOCALLY (window.SiSim,
+  // loaded from si-sim.js) and the server only delivers each tick's TRUE inputs
+  // ~150 ms late. The client predicts the other seats' inputs, steps its own
+  // world instantly (own ship = zero lag), and ROLLS BACK when the true inputs
+  // reveal a misprediction. This is geography-proof: the wire only carries
+  // inputs, never the world, so Brazil<->Brazil play is instant whatever the
+  // server's location. If the socket cannot open, the polling path below is the
+  // fallback (server-authoritative snapshots, Phase 5/6 behaviour).
+  const TICK = 50, D = 3, RB = 8; // D = delivery delay in ticks (~150ms), RB = rollback window
+  let sim = null, simHist = [], simRecv = {}, simTick = 0, simBase = null, simOver = false;
+  let simTimer = null, lastAuthStep = -1, ownHist = {};
+
+  function simClone(w) { return JSON.parse(JSON.stringify(w)); }
+  function predictFor(t, seat) {
+    // own seat: the real local input (instant). others: last input we used for them.
+    if (seat === mySeat) {
+      if (ownHist[t]) return ownHist[t]; // past tick: the input we ACTUALLY had then
+      const inp = currentInput(); return [inp.mx, inp.my, inp.fire ? 1 : 0];
+    }
+    const h = simHist[t - 1];
+    if (h && h.inputs[seat]) return h.inputs[seat];
+    return [0, 0, 0];
+  }
+  // The input to use for a seat at step t. The OWN seat ALWAYS uses the client's
+  // own instant input (never the server's, which arrives ~150 ms late) — that is
+  // what makes own ship zero-lag. Remote seats use the server's true input once
+  // it has arrived (simRecv), else the last prediction.
+  function inputFor(t, seat) {
+    if (seat === mySeat) return predictFor(t, seat);
+    if (simRecv[t] && simRecv[t][seat]) return simRecv[t][seat];
+    return predictFor(t, seat);
+  }
+  function stepTick(t) {
+    const inp = [];
+    for (let s = 0; s < sim.players.length; s++) inp.push(inputFor(t, s));
+    for (let s = 0; s < sim.players.length; s++) window.SiSim.applyInput(sim, s, inp[s][0], inp[s][1], inp[s][2]);
+    window.SiSim.step(sim, TICK);
+    if (mySeat >= 0) ownHist[t] = inp[mySeat]; // record the own input used at t
+    simHist[t] = { world: simClone(sim), inputs: inp };
+  }
+  function rollbackTo(tp) {
+    sim = tp === 0 ? simClone(simBase) : simClone(simHist[tp - 1].world);
+    for (let t2 = tp; t2 < simTick; t2++) {
+      const in2 = [];
+      for (let s = 0; s < sim.players.length; s++) in2.push(inputFor(t2, s));
+      for (let s = 0; s < sim.players.length; s++) window.SiSim.applyInput(sim, s, in2[s][0], in2[s][1], in2[s][2]);
+      window.SiSim.step(sim, TICK);
+      if (mySeat >= 0) ownHist[t2] = in2[mySeat];
+      simHist[t2] = { world: simClone(sim), inputs: in2 };
+    }
+  }
+  function handleSimSnapshot(s) {
+    // s.t is the authoritative TICK VALUE (world.tick after stepping); the inputs
+    // in s.i are the ones the server used on the step that PRODUCED that tick,
+    // i.e. step-index k = s.t - 1. simHist/simRecv are indexed by step-index, so
+    // store the true inputs at k (not s.t) or rollback would never see them.
+    if (!sim) return;
+    const k = s.t - 1;
+    if (s.i) simRecv[k] = s.i;
+    if (k > lastAuthStep) lastAuthStep = k;
+    // roll back the earliest mispredicted step in the window (probe-verified)
+    for (let tp = Math.max(0, k - RB); tp < k; tp++) {
+      const r = simRecv[tp];
+      if (!r) continue;
+      const h = simHist[tp];
+      if (!h) continue;
+      let bad = false;
+      for (let s2 = 0; s2 < r.length; s2++) if (String(h.inputs[s2]) !== String(r[s2])) { bad = true; break; }
+      if (!bad) continue;
+      rollbackTo(tp);
+      break;
+    }
+    // waiting-room auto-start still keys off the authoritative seat count
+    if (s.st === 'waiting' && mySeat === 0) {
+      const seats = (s.ps || []).length;
+      if (seats >= 4 || Date.now() - startedAt > 20000) doStart();
+    }
+  }
+
+  // Client-driven stepper: the browser runs the SAME sim on its OWN clock, ~D
+  // ticks ahead of the newest authority it has received, predicting the remote
+  // seats. This is what makes own ship instant (zero wire latency) and shows the
+  // other seats as predicted; rollback (in handleSimSnapshot) reconciles them the
+  // moment the true inputs arrive. Geography-proof: the wire only carries inputs.
+  function simStep() {
+    if (!sim || simOver) return;
+    if (simTick > lastAuthStep + D) return; // never run more than D ticks ahead of authority
+    stepTick(simTick);
+    simTick++;
+    const local = window.SiSim.snapshot(sim);
+    prevSnap = snap; snap = local; snapAt = Date.now();
+    snapGap = 50; // the local sim steps at the fixed 20 Hz tick rate
+    if (local.t !== lastTick || local.st !== lastStatus) { lastTick = local.t; lastStatus = local.st; drawHud(local); }
+    if (local.st === 'over' && !simOver) { simOver = true; endMatch(local); }
+  }
+
+  function seedSim(s) {
+    // build the local world from the create/join/start snapshot's seed + seats
+    if (!s || !s.seed) return;
+    sim = window.SiSim.create(s.md || 'normal', s.seed);
+    for (const p of (s.ps || [])) window.SiSim.addPlayer(sim, p[1]);
+    sim.status = 'live';
+    simBase = simClone(sim);
+    simHist = []; simRecv = {}; simTick = 0; simOver = false; lastAuthStep = -1; ownHist = {};
+    if (simTimer) clearInterval(simTimer);
+    simTimer = setInterval(simStep, TICK); // drive the local sim on the client clock
+  }
+
   let wsSock = null, wsAlive = false, wsOpen = false, wsInputTimer = null;
 
   function openSocket() {
@@ -338,38 +441,33 @@
     try { sock = new WebSocket(url); } catch (_) { return; }
     wsSock = sock; wsAlive = true; wsOpen = false;
 
-    // CRITICAL: the handshake is NOT instant over a real wire (measured ~450 ms
-    // TLS connect Brazil -> this box). `sock.send()` while the socket is still
-    // CONNECTING throws - and the old code paid that throw 150 ms after opening,
-    // which ran drop() and switched the whole match to the 190 ms polling path
-    // WHILE THE SOCKET WAS STILL FINE. That is the input lag users feel. So:
-    // sends wait for 'open' (or the first pushed message), and a send failure
-    // only buries the transport if the socket was genuinely open before it.
     sock.addEventListener('open', () => { wsOpen = true; });
     sock.addEventListener('message', (ev) => {
-      wsOpen = true; // a pushed snapshot proves the socket works, even if 'open' never fired
+      wsOpen = true;
       let s;
       try { s = JSON.parse(ev.data); } catch (_) { return; }
-      if (s && s.ok !== false && (s.ps || s.st)) handleSnapshot(s);
+      if (!s || s.ok === false) return;
+      // Only run the local rollback sim once the authoritative world is LIVE.
+      // During the waiting room the server never steps (tick stays 0), so seeding
+      // there would let the client run ahead and diverge. Until then, render the
+      // authoritative waiting snapshot (the normal polling path renderer).
+      if (s.seed && !sim && s.st === 'live') { seedSim(s); return; }
+      if (sim) handleSimSnapshot(s); else handleSnapshot(s);
     });
     const drop = () => {
       if (wsSock !== sock) return;
       wsSock = null; wsAlive = false; wsOpen = false;
       if (wsInputTimer) { clearInterval(wsInputTimer); wsInputTimer = null; }
-      // The socket died mid-match: fall back to the polling path, never die.
       if (running && myCode) startPolling();
     };
     sock.addEventListener('error', drop);
     sock.addEventListener('close', drop);
 
-    // Input rides every 60 ms - the server just stores it (applyInput is a field
-    // write), so a tighter cadence is pure win: worst-case input lag becomes one
-    // interval + one tick instead of 150 + 50 ms.
     wsInputTimer = setInterval(() => {
       if (!wsAlive || !wsSock || !wsOpen || mySeat < 0) return;
       const inp = currentInput();
       try { wsSock.send(JSON.stringify({ s: mySeat, i: [inp.mx, inp.my, inp.fire ? 1 : 0] })); }
-      catch (_) { if (wsOpen) drop(); } // not-open throws are harmless: ignore them
+      catch (_) { if (wsOpen) drop(); }
     }, 60);
   }
 
@@ -413,6 +511,7 @@
     running = false;
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     if (wsInputTimer) { clearInterval(wsInputTimer); wsInputTimer = null; }
+    if (simTimer) { clearInterval(simTimer); simTimer = null; }
     if (wsSock) { try { wsSock.close(); } catch (_) {} wsSock = null; wsAlive = false; }
   }
 

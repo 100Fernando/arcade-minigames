@@ -34,19 +34,26 @@ const CHAPTERS = [
 const COLORS = ['#00ff88', '#4facfe', '#ffcc00', '#f093fb'];
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-// Determinism: when a world carries a `seed`, every random draw and every
-// "clock" read must be reproducible so two clients can replay the SAME match
-// (rollback netcode). A seeded PRNG (mulberry32) is read through a module-global
-// `RNG` that create()/step() set synchronously at their top - safe because each
-// call is fully synchronous (no await inside step), even though the server steps
-// many worlds in one loop. With NO seed, RNG stays Math.random and Date.now()
-// drives the clock, so the existing server path is byte-for-byte unchanged.
-let RNG = Math.random;
-function makeRng(seed) {
-  let s = (seed >>> 0) || 1;
-  return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = (t ^ (t >>> 15)) * 0x85EBCA6B >>> 0; t = (t ^ (t >>> 13)) * 0xC2B2AE35 >>> 0; return ((t ^ (t >>> 16)) >>> 0) / 4294967296; };
-}
-const rnd = (a, b) => a + RNG() * (b - a);
+// Determinism + rollback-safe PRNG. The random state lives INSIDE the world
+// (`w.rngState`), not in a closure, so cloning a world (rollback) restores the
+// exact RNG state and re-simulating a tick reproduces the SAME draws the
+// authoritative server made at that tick. `CURW` is the world whose state
+// rnd() advances; step() sets it synchronously at its top (each step is fully
+// synchronous, so stepping many worlds in one server loop stays correct). With
+// NO seed (rngState undefined) rnd() falls back to Math.random, so the live
+// server path is byte-for-byte unchanged.
+let CURW = null;
+const rnd = (a, b) => {
+  if (CURW && CURW.rngState != null) {
+    let s = (CURW.rngState + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = (t ^ (t >>> 15)) * 0x85EBCA6B >>> 0;
+    t = (t ^ (t >>> 13)) * 0xC2B2AE35 >>> 0;
+    CURW.rngState = s;
+    return a + (((t ^ (t >>> 16)) >>> 0) / 4294967296) * (b - a);
+  }
+  return a + Math.random() * (b - a);
+};
 
 // ---------------------------------------------------------------- world
 function create(mode, seed) {
@@ -62,7 +69,7 @@ function create(mode, seed) {
     story: null, storyTimer: 0,
     createdAt: seed != null ? 0 : Date.now(), lastActivity: seed != null ? 0 : Date.now(),
   };
-  if (seed != null) { w.seed = seed; w.rng = makeRng(seed); RNG = w.rng; } // deterministic client-side sim
+  if (seed != null) { w.rngState = (seed >>> 0) || 1; w.seed0 = seed; } // deterministic client-side sim (state lives in the world)
   return w;
 }
 
@@ -78,7 +85,7 @@ function addPlayer(w, name) {
     speed: 1,
     timers: { multishot: 0, shield: 0, rapidfire: 0 },
     mx: 0, my: 0, fire: false,
-    lastInput: Date.now(), offline: false,
+    lastInput: w.rngState != null ? w.tick : Date.now(), offline: false,
     color: COLORS[seat],
   });
   return seat;
@@ -90,7 +97,7 @@ function applyInput(w, seat, mx, my, fire) {
   p.mx = clamp(Number(mx) || 0, -1, 1);
   p.my = clamp(Number(my) || 0, -1, 1);
   p.fire = !!fire;
-  p.lastInput = w.seed != null ? w.tick : Date.now(); // tick clock when deterministic
+  p.lastInput = w.rngState != null ? w.tick : Date.now(); // tick clock when deterministic
   p.offline = false;              // any input means the seat is back
   return true;
 }
@@ -152,7 +159,7 @@ function power(w, p, type) {
 }
 
 function drop(w, e) {
-  if (RNG() >= MODES[w.mode].drop || w.powerUps.length >= 3) return;
+  if (rnd(0, 1) >= MODES[w.mode].drop || w.powerUps.length >= 3) return;
   const types = ['speed', 'multishot', 'bomb', 'shield', 'rapidfire'];
   w.powerUps.push({ x: e.x + e.w / 2 - 10, y: e.y, w: 20, h: 20, type: types[Math.floor(rnd(0, 5))], age: 0 });
 }
@@ -196,11 +203,11 @@ function damage(w, p) {
 // ---------------------------------------------------------------- step
 function step(w, ms) {
   if (w.status !== 'live') return;
+  CURW = w; // rnd() advances THIS world's rngState (rollback-safe)
   const dt = ms / 1000;
   const tier = Math.floor((w.level - 1) / 5);
   const mode = MODES[w.mode];
-  if (w.rng) RNG = w.rng; // keep every draw reproducible for this world
-  const now = w.seed != null ? w.tick : Date.now(); // tick clock when deterministic
+  const now = w.rngState != null ? w.tick : Date.now(); // tick clock when deterministic
 
   if (w.storyTimer > 0) w.storyTimer = Math.max(0, w.storyTimer - ms);
   w.flash = Math.max(0, w.flash - ms);
@@ -212,7 +219,7 @@ function step(w, ms) {
     p.shot = Math.max(0, p.shot - ms);
     // A seat that stopped sending input is offline: its ship freezes, translucent.
     // 8 s of idle. In the deterministic (tick) clock that is 160 ticks at 50 ms.
-    if (!p.offline && now - p.lastInput > (w.seed != null ? 160 : 8000)) p.offline = true;
+    if (!p.offline && now - p.lastInput > (w.rngState != null ? 160 : 8000)) p.offline = true;
     if (!p.alive) {
       if (p.respawn > 0) {
         p.respawn -= ms;
@@ -402,6 +409,7 @@ function snapshot(w) {
     story: w.storyTimer > 0 ? w.story : null,
     total: w.players.reduce((s, p) => s + p.score, 0),
     createdAt: w.createdAt,
+    seed: w.seed0, // client rebuilds the SAME world from this (rollback netcode)
   };
 }
 
@@ -409,4 +417,7 @@ const SiSim = {
   create, addPlayer, applyInput, step, initLevel, snapshot, restart,
   MODES, BOSS_DEFS, CHAPTERS, COLORS, W, H,
 };
-module.exports = SiSim;
+// CommonJS on the server; on the browser (a <script src="si-sim.js">) expose it
+// as window.SiSim so mp-client.js can run the SAME sim locally (rollback netcode).
+if (typeof module !== 'undefined' && module.exports) module.exports = SiSim;
+else if (typeof window !== 'undefined') window.SiSim = SiSim;

@@ -212,6 +212,63 @@ redeploy same `si-sim.js`+`server.js`, ~$5–15/mo, → ~10–30 ms) or run the 
 each browser with rollback (option C, no host, → ~0 ms own-ship). Node/python/libs
 are NOT the lever — geography is.
 
+## Phase 9 — client-side deterministic sim + rollback netcode (option C, geography-proof)
+
+The residual ~150–170 ms in Phase 8 is the Brazil↔France wire. Option C removes it
+WITHOUT moving the server: the browser runs the SAME sim LOCALLY and the wire only
+carries INPUTS, so Brazil↔Brazil play is instant whatever the box's location. This
+is the textbook GGPO idea: predict the other seats' inputs, step your own world
+instantly (own ship = zero lag), and ROLL BACK when the true inputs arrive ~150 ms
+late and reveal a misprediction.
+
+### Determinism foundation (the prerequisite — verified first)
+
+The sim must be byte-reproducible from a seed, and rollback-safe (a cloned world
+re-simulated must match the authoritative one). Gotchas found + fixed in `si-sim.js`:
+- **RNG state must live INSIDE the world.** A closure PRNG (`Math.random`) is not
+  cloneable, so rollback diverged. Fix: `mulberry32` advancing `w.rngState` when
+  seeded; `rnd(a,b)` reads `CURW.rngState`. `create(mode,seed)` sets `w.rngState`
+  + `w.seed0`.
+- **Tick clock, not wall clock, when seeded.** `step()` uses `now = w.tick` and the
+  offline/idle rule uses `160` ticks (8 s at 50 ms) instead of `Date.now()`/8000 ms.
+  `addPlayer` + `applyInput` must seed `lastInput` with `w.tick` too (a `Date.now()`
+  leak there meant idle seats never went offline — caught by `test-mp.js`).
+- **`drop()` used `Math.random` directly** (a leak outside `rnd()`) → tick-23
+  divergence. Now `rnd(0,1)`.
+- `snapshot()` carries `seed: w.seed0` so the client rebuilds the SAME world.
+- Export is dual-mode: `module.exports` on the server, `window.SiSim` in the browser.
+
+Verified (`probe-determinism.js`): 600 ticks byte-identical; clone-at-300 re-simmed
+to 600 == authoritative; unseeded path still differs (real randomness kept).
+
+### The port (server + client)
+
+- **server.js**: `createRoom` seeds the world `(Math.random()*0xFFFFFFFF)|1` (seed is
+  public — it only fixes the random stream, not fairness). The stepper pushes each
+  snapshot with `snap.i = players.map([mx,my,fire01])` — the TRUE inputs used on the
+  step that produced that tick — so the client can roll back on a misprediction.
+- **mp-client.js**: `seedSim(s)` rebuilds the local world from `s.seed` + seats when
+  the authoritative world first reports `st==='live'` (NOT during the waiting room —
+  the server never steps there, so seeding early would let the client run ahead and
+  diverge). A client-driven `simTimer` steps the local sim on the browser's OWN clock,
+  gated at `lastAuthStep + D` (never more than D=~3 ticks ahead of authority). `inputFor`
+  ALWAYS uses the client's own instant input for its seat (never the lagged server
+  entry — that is what makes own ship zero-lag), and the server's true input for remote
+  seats once it has arrived (`simRecv`), else the last prediction. `ownHist[t]` records
+  the own input used at each step so rollback of PAST ticks replays the input the player
+  ACTUALLY had then, not the live one. `handleSimSnapshot` stores true inputs at
+  **step-index `k = s.t - 1`** (the snapshot's `t` is the tick VALUE after stepping —
+  off-by-one gotcha: storing at `s.t` meant rollback never saw them). It renders the
+  LOCAL predicted world, not the authoritative snapshot.
+- **index.html**: `<script src="si-sim.js">` before `mp-client.js` so `window.SiSim`
+  exists.
+
+Verified (`probe-rollback3.js`): the EXACT ported functions (inputFor/stepTick/rollbackTo
++ client-driven stepper gated at `lastAuthStep+D` + ownHist) converge — client world ==
+server world at every settled tick (settled = `t-D-1`: a step is guaranteed corrected only
+once the NEXT snapshot arrives, since that arrival's rollback window includes it).
+Regressions green: `test-mp.js` 25/25, `test-ws.js` 8/8, `test-state-input.js` 4/4.
+
 ## File touch map
 
 | File | Change |

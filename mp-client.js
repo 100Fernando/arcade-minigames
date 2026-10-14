@@ -375,6 +375,12 @@
     step();
   }
 
+  function startLobby() {
+    if (lobbyTimer) return;
+    const lobbyStep = async () => { await refreshLobby(); lobbyTimer = setTimeout(lobbyStep, 3000); };
+    lobbyStep();
+  }
+
   function startLoop() {
     if (running) return;
     running = true;

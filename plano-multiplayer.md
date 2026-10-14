@@ -144,12 +144,12 @@ New file **`mp-client.js`** (loaded after `script.js`/`ranking.js`), own IIFE, p
 ### Plan (execute one at a time, verify each)
 
 - [x] 6.0 Probe: Node emits `upgrade` with no dependency (`probe-upgrade.js` → PASS).
-- [ ] 6.1 `server.js`: WebSocket room transport — `GET /api/mp/ws?code=XXXX` upgrades; server PUSHES `snapshot` every 50 ms tick (only when ≥1 socket connected), accepts `{i:[mx,my,fire],s:seat}` messages fire-and-forget; per-socket seat binding; TTL/limits identical to HTTP path.
-- [ ] 6.2 `mp-client.js`: WS transport — on create/join, open the socket; input sent immediately (no await); snapshots received push-based; **own-ship prediction** (client applies its own input locally between snapshots so a press acts at once, server snapshot corrects); keep HTTP polling loop as automatic fallback when the socket errors/closes.
-- [ ] 6.3 nginx on VPS: add `map $http_upgrade $connection_upgrade` + upgrade headers to the `/ranking-api/` location (idempotent script, `nginx -t` guard, wedding + ranking regressions re-checked).
-- [ ] 6.4 Tests: `test-ws.js` (node, hand-rolled client): create→join→ws→start→input msg→tick advances→snapshot push→seat sync; `test-mp.js` + `test-state-input.js` still green (HTTP path untouched).
-- [ ] 6.5 Deploy: scp `server.js` → `/opt/ranking-api` + `pm2 restart`; run nginx upgrade script; push `mp-client.js` to `/var/www/arcade` + Pages; live verify two browser pages on the same room, measure input→response delay < 150 ms.
-- [ ] 6.6 `git commit` + push; SHA-match check per the Pages gotcha.
+- [x] 6.1 `server.js`: WebSocket room transport — `GET /api/mp/ws?code=XXXX` upgrades; server PUSHES `snapshot` every 50 ms tick (only when ≥1 socket connected), accepts `{i:[mx,my,fire],s:seat}` messages fire-and-forget; per-socket seat binding; TTL/limits identical to HTTP path.
+- [x] 6.2 `mp-client.js`: WS transport — on create/join, open the socket; input sent immediately (no await); snapshots received push-based; **own-ship prediction** (client applies its own input locally between snapshots so a press acts at once, server snapshot corrects); keep HTTP polling loop as automatic fallback when the socket errors/closes.
+- [x] 6.3 nginx on VPS: `deploy/vps-ws.sh` added `map $http_upgrade $connection_upgrade` + `proxy_http_version 1.1` + `Upgrade/Connection` headers to the `/ranking-api/` location (idempotent, `nginx -t` guard, wedding + ranking + arcade regressions all green).
+- [x] 6.4 Tests: `test-ws.js` (node, hand-rolled client) **8/8 PASS** (upgrade 101, pushed snapshot with no GET, input msg moves ship, fire spawns bullets, 20 Hz push, HTTP path still ok with a socket open); `test-mp.js` **25/25**, `test-state-input.js` **4/4** (HTTP path untouched).
+- [x] 6.5 Deploy: scp `server.js` → `/opt/ranking-api` + `pm2 restart` (health 200, ws upgrade reaches node = 400 on unknown code); `vps-ws.sh` nginx upgrade; scp `mp-client.js` → `/var/www/arcade` (SHA `9d108428…` == repo). Live probe `probe-live-ws.js`: **101 upgrade, 31 pushes in 1.5 s (~20 Hz), input moved ship 60→398** through nginx on the real box.
+- [x] 6.6 `git commit` + push (cf20c2d); VPS arcade SHA matches repo; Pages SHA pending propagation (known `max-age=600` gotcha — re-check with curl, not a tab reload).
 
 ## File touch map
 

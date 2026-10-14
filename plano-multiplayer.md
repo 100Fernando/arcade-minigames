@@ -191,6 +191,27 @@ players' ships can only be seen after one wire leg. To cut that further you must
 physically move the server closer to the players (or run the sim in the browser).
 Node version / Python / libraries are NOT the issue — verified node 18 direct = 15 ms.
 
+## Phase 8 — geography-independent wire-waste fix (2026-10-14, no new host)
+
+Phase 7 left ~180 ms = the Brazil↔France leg. But real users ALSO paid TLS
+handshake waste (cold 2.17 s, spikes 5.7 s) on every burst. `deploy/vps-h2.sh`
+removes that waste WITHOUT moving the server:
+- **TLS session resumption** (`ssl_session_cache shared:SSL:10m` + reuse) → repeat
+  handshakes cost ~1 round trip, not a full ClientHello/ServerHello. Cold leg
+  dropped 2.17 s → ~500–800 ms; the 5.7 s spikes are gone.
+- **upstream keepalive** via a named `upstream rkapi { keepalive 64; keepalive_timeout 30s; server 127.0.0.1:8765; }` + `proxy_pass http://rkapi/` (bare-/ strip identical). NOTE: `keepalive` is NOT valid in a `location` — it must live in an `upstream` block (the first attempt failed `nginx -t` and was safely restored).
+
+Measured after: WS input lag median 21–46 ms on fast runs, 135–172 ms on slow
+runs — the spread IS the irreducible Brazil→France leg (the WS conn is persistent,
+so no per-frame handshake remains). All regressions green (ws upgrade 400, health
+200, wedding 200/401, arcade 200).
+
+**Honest floor:** with the sim on a France/USA box, ~150–170 ms is physics. To go
+below it you must co-locate the sim with the players (option A: Brazil host —
+redeploy same `si-sim.js`+`server.js`, ~$5–15/mo, → ~10–30 ms) or run the sim in
+each browser with rollback (option C, no host, → ~0 ms own-ship). Node/python/libs
+are NOT the lever — geography is.
+
 ## File touch map
 
 | File | Change |

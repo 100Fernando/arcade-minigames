@@ -34,11 +34,23 @@ const CHAPTERS = [
 const COLORS = ['#00ff88', '#4facfe', '#ffcc00', '#f093fb'];
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const rnd = (a, b) => a + Math.random() * (b - a);
+// Determinism: when a world carries a `seed`, every random draw and every
+// "clock" read must be reproducible so two clients can replay the SAME match
+// (rollback netcode). A seeded PRNG (mulberry32) is read through a module-global
+// `RNG` that create()/step() set synchronously at their top - safe because each
+// call is fully synchronous (no await inside step), even though the server steps
+// many worlds in one loop. With NO seed, RNG stays Math.random and Date.now()
+// drives the clock, so the existing server path is byte-for-byte unchanged.
+let RNG = Math.random;
+function makeRng(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = (t ^ (t >>> 15)) * 0x85EBCA6B >>> 0; t = (t ^ (t >>> 13)) * 0xC2B2AE35 >>> 0; return ((t ^ (t >>> 16)) >>> 0) / 4294967296; };
+}
+const rnd = (a, b) => a + RNG() * (b - a);
 
 // ---------------------------------------------------------------- world
-function create(mode) {
-  return {
+function create(mode, seed) {
+  const w = {
     tick: 0,
     level: 1,
     status: 'waiting',            // waiting -> live -> over
@@ -48,8 +60,10 @@ function create(mode) {
     enemyTimer: 0, enemyDir: 1, fireTimer: 0, bossTimer: 0,
     warning: 0, warningX: 0, flash: 0, laser: 0, laserX: 0,
     story: null, storyTimer: 0,
-    createdAt: Date.now(), lastActivity: Date.now(),
+    createdAt: seed != null ? 0 : Date.now(), lastActivity: seed != null ? 0 : Date.now(),
   };
+  if (seed != null) { w.seed = seed; w.rng = makeRng(seed); RNG = w.rng; } // deterministic client-side sim
+  return w;
 }
 
 function addPlayer(w, name) {
@@ -76,7 +90,7 @@ function applyInput(w, seat, mx, my, fire) {
   p.mx = clamp(Number(mx) || 0, -1, 1);
   p.my = clamp(Number(my) || 0, -1, 1);
   p.fire = !!fire;
-  p.lastInput = Date.now();
+  p.lastInput = w.seed != null ? w.tick : Date.now(); // tick clock when deterministic
   p.offline = false;              // any input means the seat is back
   return true;
 }
@@ -138,7 +152,7 @@ function power(w, p, type) {
 }
 
 function drop(w, e) {
-  if (Math.random() >= MODES[w.mode].drop || w.powerUps.length >= 3) return;
+  if (RNG() >= MODES[w.mode].drop || w.powerUps.length >= 3) return;
   const types = ['speed', 'multishot', 'bomb', 'shield', 'rapidfire'];
   w.powerUps.push({ x: e.x + e.w / 2 - 10, y: e.y, w: 20, h: 20, type: types[Math.floor(rnd(0, 5))], age: 0 });
 }
@@ -185,7 +199,8 @@ function step(w, ms) {
   const dt = ms / 1000;
   const tier = Math.floor((w.level - 1) / 5);
   const mode = MODES[w.mode];
-  const now = Date.now();
+  if (w.rng) RNG = w.rng; // keep every draw reproducible for this world
+  const now = w.seed != null ? w.tick : Date.now(); // tick clock when deterministic
 
   if (w.storyTimer > 0) w.storyTimer = Math.max(0, w.storyTimer - ms);
   w.flash = Math.max(0, w.flash - ms);
@@ -196,7 +211,8 @@ function step(w, ms) {
     p.invuln = Math.max(0, p.invuln - ms);
     p.shot = Math.max(0, p.shot - ms);
     // A seat that stopped sending input is offline: its ship freezes, translucent.
-    if (!p.offline && now - p.lastInput > 8000) p.offline = true;
+    // 8 s of idle. In the deterministic (tick) clock that is 160 ticks at 50 ms.
+    if (!p.offline && now - p.lastInput > (w.seed != null ? 160 : 8000)) p.offline = true;
     if (!p.alive) {
       if (p.respawn > 0) {
         p.respawn -= ms;

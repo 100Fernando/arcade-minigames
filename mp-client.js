@@ -197,13 +197,13 @@
   // to 40 ms), so the server sees the command at press time - not at poll time.
   let lastSentInput = 0;
   function sendInputNow() {
-    if (!wsSock || mySeat < 0) return;
+    if (!wsSock || !wsOpen || mySeat < 0) return;
     const now = Date.now();
     if (now - lastSentInput < 40) return;
     lastSentInput = now;
     const inp = currentInput();
     try { wsSock.send(JSON.stringify({ s: mySeat, i: [inp.mx, inp.my, inp.fire ? 1 : 0] })); }
-    catch (_) {}
+    catch (_) { /* the 60 ms interval re-sends and owns the drop path */ }
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') keys.left = true;
@@ -326,7 +326,7 @@
   // tick (20 Hz) and the client SENDS input fire-and-forget, so input lag collapses
   // to the sim tick. If the socket cannot open (proxy without upgrade mapping, an
   // extension, a flaky network) the polling loop below takes over automatically.
-  let wsSock = null, wsAlive = false, wsInputTimer = null;
+  let wsSock = null, wsAlive = false, wsOpen = false, wsInputTimer = null;
 
   function openSocket() {
     if (!myCode || wsSock) return;
@@ -336,16 +336,25 @@
     catch (_) { return; }
     let sock;
     try { sock = new WebSocket(url); } catch (_) { return; }
-    wsSock = sock; wsAlive = true;
+    wsSock = sock; wsAlive = true; wsOpen = false;
 
+    // CRITICAL: the handshake is NOT instant over a real wire (measured ~450 ms
+    // TLS connect Brazil -> this box). `sock.send()` while the socket is still
+    // CONNECTING throws - and the old code paid that throw 150 ms after opening,
+    // which ran drop() and switched the whole match to the 190 ms polling path
+    // WHILE THE SOCKET WAS STILL FINE. That is the input lag users feel. So:
+    // sends wait for 'open' (or the first pushed message), and a send failure
+    // only buries the transport if the socket was genuinely open before it.
+    sock.addEventListener('open', () => { wsOpen = true; });
     sock.addEventListener('message', (ev) => {
+      wsOpen = true; // a pushed snapshot proves the socket works, even if 'open' never fired
       let s;
       try { s = JSON.parse(ev.data); } catch (_) { return; }
       if (s && s.ok !== false && (s.ps || s.st)) handleSnapshot(s);
     });
     const drop = () => {
       if (wsSock !== sock) return;
-      wsSock = null; wsAlive = false;
+      wsSock = null; wsAlive = false; wsOpen = false;
       if (wsInputTimer) { clearInterval(wsInputTimer); wsInputTimer = null; }
       // The socket died mid-match: fall back to the polling path, never die.
       if (running && myCode) startPolling();
@@ -353,14 +362,15 @@
     sock.addEventListener('error', drop);
     sock.addEventListener('close', drop);
 
-    // Input rides every 150 ms whether or not it changed - the server also uses
-    // lastInput to mark idle seats offline, so a held-still player must stay alive.
+    // Input rides every 60 ms - the server just stores it (applyInput is a field
+    // write), so a tighter cadence is pure win: worst-case input lag becomes one
+    // interval + one tick instead of 150 + 50 ms.
     wsInputTimer = setInterval(() => {
-      if (!wsAlive || !wsSock || mySeat < 0) return;
+      if (!wsAlive || !wsSock || !wsOpen || mySeat < 0) return;
       const inp = currentInput();
       try { wsSock.send(JSON.stringify({ s: mySeat, i: [inp.mx, inp.my, inp.fire ? 1 : 0] })); }
-      catch (_) { drop(); }
-    }, 150);
+      catch (_) { if (wsOpen) drop(); } // not-open throws are harmless: ignore them
+    }, 60);
   }
 
   function startPolling() {

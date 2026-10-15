@@ -269,6 +269,90 @@ server world at every settled tick (settled = `t-D-1`: a step is guaranteed corr
 once the NEXT snapshot arrives, since that arrival's rollback window includes it).
 Regressions green: `test-mp.js` 25/25, `test-ws.js` 8/8, `test-state-input.js` 4/4.
 
+## Phase 10 — the desync bug (reported from production, fixed 2026-10-14)
+
+Reported symptom: in production each player saw a **different fleet and different
+phases** — the worlds were not synchronized. Reproduced offline (`probe-desync.js`): a
+client that joins mid-match diverged from the server at the very first rollback. Three
+independent mechanisms were responsible; each one alone was enough to break sync.
+
+### Cause 1 — history anchored at the wrong step
+
+`seedSim` rebuilt the world from the seed and started history at step 0 while adopting a
+mid-match snapshot. `rollbackTo(0)` then replayed ~120 phantom steps from a world that had
+already been replaced by the snapshot. Fix: anchor history at the snapshot's OWN step index
+(`lastStep = s.t - 1`), keep `simAnchor`, and never roll back past it.
+
+### Cause 2 — the snapshot was lossy
+
+`snapshot()` rounded positions and divided timers into TICK units. Two consequences:
+- `230 / 50 * 50 = 229.99999999999997`, so every restored timer was a hair off, which
+  shifted the fleet's firing cadence within a few ticks;
+- rounding `x`, `y`, `baseX`, `t` desynced the formation clock, so the fleet drifted ~7 px
+  and eventually spawned in different columns.
+
+Fix: `snapshot()` sends **raw** values (no rounding, no unit conversion) and `restore()` is
+its exact inverse. To keep the wire small AND keep the two worlds bit-identical, `step()`
+quantizes every moving quantity to 2 decimals (`Math.round(v*100)/100`) before the tick
+counter advances. Server and client therefore agree bit-for-bit, and the payload shrank
+(fleet 4.3 KB, boss 6.4 KB, under the 9 KB guard).
+
+### Cause 3 — the own seat trusted the wrong input
+
+`inputFor` forced the client's instant input for its own seat even on steps the server had
+already made authoritative. That input landed on a different server step, so rollback never
+corrected the own seat and the two worlds drifted forever. Fix: server truth (`simRecv`)
+wins for **every** seat; prediction is used only for steps beyond the newest authority. The
+client still has zero input lag because it renders its own predicted world — the correction
+happens in the past, not in front of the player.
+
+### Verification
+
+- `probe-desync2.js` — offline model of the fixed netcode, 3 clients joining at ticks
+  0/120/250: all identical to the server at the same step index.
+- `probe-roundtrip.js` — `snapshot → restore → snapshot` is lossless (0 mismatches).
+- `probe-live-sync.js` — two REAL websockets on the production host, each running its own
+  rollback sim: 102–108 steps compared, **0 diverged** ("SYNCHRONIZED").
+- `probe-tour.js` — 16 worlds, 8 distinct boss kinds, 0 throws over ~5800 soak ticks.
+- Suite green: `test-mp.js` 25/25, `test-ws.js` 8/8, `test-state-input.js` 4/4,
+  `probe-determinism.js` deterministic + rollback-safe.
+
+## Phase 11 — content: 16 travel worlds, 8 boss archetypes
+
+`si-sim.js` `WORLDS` went from 6 to 16 stages along an outward **travel route** — Kolonia
+Nova → Belt Aster → Crater Mars → Orbital Venus → Ring Saturn → Ice Europa → Storm Jupiter →
+Canyon Io → Nebula Zeta → Wraith Belt → Forge Vulcan → Void Xeno → Comet Trail → Abyss Theta →
+Gate Omega → Core Prime — each with its own fleet shape, hazard and named commander.
+
+- **Formation system**: `FORMS` is a table of 14 named predicates (`grid`, `wedge`,
+  `stagger`, `columns`, `ring`, `twin`, `arrow`, `cross`, `wall`, `cluster`, `snake`,
+  `hourglass`, `lattice`, `fortress`) and every world picks a different one, so the fleets
+  actually look different rather than being the same block re-skinned.
+- **Enemy variety**: `ENEMY` has `basic`, `zigzag`, `sniper`, `armored`, `bomber`, `grunt`,
+  `drone` with distinct HP/points; each world's `t` string picks one type per row, so later
+  worlds mix armored fronts with sniper/bomber support.
+- **8 boss archetypes** (`kind` 0–7), each with its own palette, size, velocity and pattern in
+  `bossAct()`: 0 fan + aimed sniper pair, 1 twin rain + horizontal sweep, 2 telegraphed laser
+  wall + 8-way burst, 3 rotating spiral barrels, 4 bastion (three gates, one opens), 5 harvester
+  (magnet rain + side vents), 6 gatekeeper (crossfire + aimed volley), 7 oracle (all of the
+  above, escalating by phase).
+- **Escort drones**: every commander keeps `2 + deep/5` drones alive; they are bounded, so the
+  fight can never stall, but the player has to clear them to keep the screen readable.
+- **Difficulty**: boss HP scales per world (`60 → 260` solo across the tour) and per seat:
+  `hp × MODES[mode].hp × (1 + (seats-1) × 0.55)`, so a 4-seat match sees `159 → 689` HP.
+  Fire cadence also scales with depth and with boss rage
+  (`max(320, (1500 - deep·55) · mode.fire / rage)`), so late worlds fire faster.
+- **Hazards** 0–6 per world (`0` none, `1` drift, `2` storm, `3` comets, `4` gravity,
+  `5` splitter, `6` magnet) — 9 of the 16 worlds carry one.
+- **Two-phase levels**: `nextLevel()` runs `fleet → boss → next world`, so every world ends in
+  a boss fight; victory only at `w.level >= WORLDS.length`.
+- **Difficulty**: boss HP scales per world (`60 → 260` solo across the tour) and per seat:
+  `hp × MODES[mode].hp × (1 + (seats-1) × 0.55)`, so a 4-seat game sees `159 → 689` HP.
+  Fire cadence also scales with depth and boss rage, so late worlds fire faster.
+- **Two-phase levels**: `nextLevel()` runs `fleet → boss → next world`, so every world ends
+  in a boss fight; victory only at `w.level >= WORLDS.length`.
+- **Hazards** (0–6) per world: drifting debris, side guns, etc., drawn by the renderer.
+
 ## File touch map
 
 | File | Change |

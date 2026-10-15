@@ -344,14 +344,23 @@
     if (h && h.inputs[seat]) return h.inputs[seat];
     return [0, 0, 0];
   }
-  // The input to use for a seat at step t. The OWN seat ALWAYS uses the client's
-  // own instant input (never the server's, which arrives ~150 ms late) — that is
-  // what makes own ship zero-lag. Remote seats use the server's true input once
-  // it has arrived (simRecv), else the last prediction.
+  // The input to use for a seat at step t. If the server's TRUE input for t has
+  // arrived, it is authoritative for EVERY seat - including the local one, whose
+  // send can land on a different server step than the one the client used it on.
+  // Only steps beyond the newest authority have no truth yet, and those use the
+  // client's own instant input: that is what keeps the local ship lag-free, with
+  // rollback reconciling the rare step where the wire put the input elsewhere.
   function inputFor(t, seat) {
-    if (seat === mySeat) return predictFor(t, seat);
     if (simRecv[t] && simRecv[t][seat]) return simRecv[t][seat];
     return predictFor(t, seat);
+  }
+  // History is only ever consulted inside the rollback window, so drop everything
+  // older than it. Unbounded maps are a leak over a long match.
+  function pruneHist() {
+    const lo = simTick - RB - D - 2;
+    for (const t of Object.keys(simHist)) if (t < lo) delete simHist[t];
+    for (const t of Object.keys(simRecv)) if (t < lo) delete simRecv[t];
+    for (const t of Object.keys(ownHist)) if (t < lo) delete ownHist[t];
   }
   function stepTick(t) {
     const inp = [];
@@ -362,7 +371,10 @@
     simHist[t] = { world: simClone(sim), inputs: inp };
   }
   function rollbackTo(tp) {
-    sim = tp === 0 ? simClone(simBase) : simClone(simHist[tp - 1].world);
+    // simBase is the state after step simAnchor (step 0 for a fresh match), so
+    // the anchor is the earliest step we may rewind to.
+    if (tp <= simAnchor) sim = simClone(simBase);
+    else { const h = simHist[tp - 1]; if (!h) return false; sim = simClone(h.world); }
     for (let t2 = tp; t2 < simTick; t2++) {
       const in2 = [];
       for (let s = 0; s < sim.players.length; s++) in2.push(inputFor(t2, s));
@@ -382,7 +394,7 @@
     if (s.i) simRecv[k] = s.i;
     if (k > lastAuthStep) lastAuthStep = k;
     // roll back the earliest mispredicted step in the window (probe-verified)
-    for (let tp = Math.max(0, k - RB); tp < k; tp++) {
+    for (let tp = Math.max(simAnchor, k - RB); tp < k; tp++) {
       const r = simRecv[tp];
       if (!r) continue;
       const h = simHist[tp];
@@ -410,6 +422,7 @@
     if (simTick > lastAuthStep + D) return; // never run more than D ticks ahead of authority
     stepTick(simTick);
     simTick++;
+    pruneHist();
     const local = window.SiSim.snapshot(sim);
     prevSnap = snap; snap = local; snapAt = Date.now();
     snapGap = 50; // the local sim steps at the fixed 20 Hz tick rate
@@ -417,16 +430,49 @@
     if (local.st === 'over' && !simOver) { simOver = true; endMatch(local); }
   }
 
+  // ---------------------------------------------------------------- seed anchor
+  // seedSim() used to rebuild the world from the SEED and start history at step
+  // 0. That is only correct for a client that joins before the first step. A
+  // client that joins mid-match (or a room that was restarted) gets a snapshot
+  // whose world is already N steps in, while its history still starts at step 0
+  // — so rollbackTo(0) re-simulated N phantom steps on top of a mid-match state
+  // and every non-tick-0 client drifted forever (measured: 13 enemies vs the
+  // server's 11 at the same tick; each player saw a different fleet/phase).
+  //
+  // The fix is to anchor the history at the snapshot's OWN step index. The
+  // snapshot is the state AFTER step (s.t - 1), so simHist[s.t - 1] must equal
+  // it and the client's next step is s.t. Rebuilding from the seed is kept only
+  // for the tick-0 case, where it is exact and cheaper than cloning.
+  let simAnchor = 0; // earliest step index the client can (re)run
   function seedSim(s) {
-    // build the local world from the create/join/start snapshot's seed + seats
     if (!s || !s.seed) return;
-    sim = window.SiSim.create(s.md || 'normal', s.seed);
-    for (const p of (s.ps || [])) window.SiSim.addPlayer(sim, p[1]);
-    sim.status = 'live';
-    simBase = simClone(sim);
-    simHist = []; simRecv = {}; simTick = 0; simOver = false; lastAuthStep = -1; ownHist = {};
+    const lastStep = s.t - 1; // last step the SERVER has completed
+    if (lastStep < 0) return; // tick-0 snapshot: nothing has stepped yet
+    simHist = []; simRecv = {}; ownHist = {};
+    if (lastStep === 0) {
+      // The snapshot is the RESULT of step 0, so the room's seed still gives the
+      // exact initial state - rebuild from it and replay from the very start,
+      // which keeps the PRNG stream identical to the server's.
+      sim = window.SiSim.create(s.md || 'normal', s.seed);
+      for (const p of (s.ps || [])) window.SiSim.addPlayer(sim, p[1]);
+      sim.status = 'live';
+      simBase = simClone(sim);
+      simAnchor = 0;
+      simTick = 0;
+    } else {
+      // Late joiner: the snapshot IS the authoritative state after step lastStep.
+      // Rebuilding from the seed here would replay the match on the client's own
+      // clock and give it a private fleet - the desync the user reported.
+      sim = window.SiSim.restore(s);
+      simBase = simClone(sim);
+      simAnchor = lastStep + 1;
+      simTick = lastStep + 1;
+      simHist[lastStep] = { world: simBase, inputs: s.i || null };
+    }
+    lastAuthStep = lastStep;
+    simOver = false;
     if (simTimer) clearInterval(simTimer);
-    simTimer = setInterval(simStep, TICK); // drive the local sim on the client clock
+    simTimer = setInterval(simStep, TICK);
   }
 
   let wsSock = null, wsAlive = false, wsOpen = false, wsInputTimer = null;
@@ -539,7 +585,10 @@
   }
 
   // ---------------------------------------------------------------- draw
-  const ENEMY_COLOR = { basic: '#ff3366', zigzag: '#f093fb', sniper: '#ffcc00', armored: '#00bbee' };
+  const ENEMY_COLOR = { basic: '#ff3366', zigzag: '#f093fb', sniper: '#ffcc00', armored: '#00bbee', bomber: '#ff8844', grunt: '#ff2244', drone: '#88ddff' };
+  // One palette per commander kind (0..7) — si-sim.js ships eight of them.
+  const BOSS_BODY = ['#3f6fd0', '#a8462f', '#8b3fa8', '#7f3fbf', '#2f8f6f', '#4f2f5f', '#9f2f5f', '#c9a227'];
+  const BOSS_TRIM = ['#7fd4ff', '#ff9a5a', '#f093fb', '#e0b0ff', '#7ff0c0', '#d090ff', '#ff9fd0', '#fff0a0'];
   const PU_COLOR = { speed: '#0088ff', multishot: '#ff8800', bomb: '#ffff00', shield: '#00ff88', rapidfire: '#ffffaa' };
   const PU_GLYPH = { speed: '⚡', multishot: '🔥', bomb: '💣', shield: 'S', rapidfire: 'R' };
 
@@ -555,13 +604,15 @@
     }
     for (let i = 0; i < 35; i++) { ctx.fillStyle = '#283452'; ctx.fillRect((i * 97) % CW, (i * 137) % CH, 2, 2); }
 
-    if (s.wr >= 0) {
-      ctx.fillStyle = 'rgba(255,60,70,.18)'; ctx.fillRect(s.wr - 22, 0, 44, CH);
-      ctx.strokeStyle = '#ff5566'; ctx.strokeRect(s.wr - 22, 0, 44, CH);
+    // The snapshot carries raw sim fields now (wx/ws = telegraph column + timer,
+    // lx/ls = laser column + timer), so the renderer gates on the timer.
+    if (s.ws > 0) {
+      ctx.fillStyle = 'rgba(255,60,70,.18)'; ctx.fillRect(s.wx - 22, 0, 44, CH);
+      ctx.strokeStyle = '#ff5566'; ctx.strokeRect(s.wx - 22, 0, 44, CH);
     }
-    if (s.la >= 0) {
-      ctx.fillStyle = 'rgba(255,90,100,.4)'; ctx.fillRect(s.la - 10, 0, 20, CH);
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(s.la - 3, 0, 6, CH);
+    if (s.ls > 0) {
+      ctx.fillStyle = 'rgba(255,90,100,.4)'; ctx.fillRect(s.lx - 10, 0, 20, CH);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(s.lx - 3, 0, 6, CH);
     }
 
     for (const e of s.en) {
@@ -574,8 +625,8 @@
 
     if (s.b) {
       const [, bx, by, bw, bh, bhp, bmax, kind] = s.b;
-      const body = ['#3f6fd0', '#8b3fa8', '#c9a227'][kind];
-      const trim = ['#7fd4ff', '#f093fb', '#ffcc00'][kind];
+      const body = BOSS_BODY[kind] || '#3f6fd0';
+      const trim = BOSS_TRIM[kind] || '#7fd4ff';
       ctx.fillStyle = body; ctx.fillRect(bx, by + 10, bw, bh - 10);
       ctx.fillStyle = trim; ctx.fillRect(bx + 8, by + bh - 12, 14, 10); ctx.fillRect(bx + bw - 22, by + bh - 12, 14, 10);
       ctx.fillStyle = '#101329'; ctx.fillRect(bx + 26, by + 16, 12, 10); ctx.fillRect(bx + bw - 38, by + 16, 12, 10);
@@ -680,8 +731,8 @@
       eb: rows(a.eb, b.eb, 0, 1, 90, -1),
       pu: rows(a.pu, b.pu, 0, 1, 30, 2),      // [x,y,type]
       pa: rows(a.pa, b.pa, 0, 1, 60, -1),
-      wr: one(a.wr, b.wr, 60),
-      la: one(a.la, b.la, 60),
+      wx: one(a.wx, b.wx, 60), ws: one(a.ws, b.ws, 60),
+      lx: one(a.lx, b.lx, 60), ls: one(a.ls, b.ls, 60),
       b: boss,
     };
   }

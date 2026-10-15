@@ -5,7 +5,11 @@
 // The browser NEVER runs this file — it only renders snapshots — so the
 // single-player engine inside script.js stays byte-identical (zero regression).
 //
-// Loaded by server.js: require('./si-sim.js') -> { create, addPlayer, applyInput, step, snapshot, restart }
+// Loaded by server.js: require('./si-sim.js') -> { create, addPlayer, applyInput,
+// step, snapshot, restore, restart } plus the WORLDS table. The browser ALSO
+// loads it (<script src="si-sim.js"> -> window.SiSim) so mp-client.js can run
+// the SAME deterministic sim locally with rollback netcode; the single-player
+// engine inside script.js stays byte-identical (zero regression).
 
 'use strict';
 
@@ -17,17 +21,37 @@ const MODES = {
   dificil: { name: 'Difícil', lives: 2, fire: 0.72, bullet: 1.25, hp: 1.3, drop: 0.11 },
 };
 
-const BOSS_DEFS = [
-  { name: 'Sentinela Ômega',     w: 110, h: 50, vx: 90, body: '#3f6fd0', trim: '#7fd4ff', kind: 0 },
-  { name: 'Matriarca do Enxame', w: 160, h: 44, vx: 70, body: '#8b3fa8', trim: '#f093fb', kind: 1 },
-  { name: 'Núcleo da Frota',     w: 140, h: 72, vx: 55, body: '#c9a227', trim: '#ffcc00', kind: 2 },
-];
+// ---------------------------------------------------------------- the tour
+// One entry per world. A world is a fleet (formation `form`, rows `rows`, cols
+// `cols`, one enemy type per row in `t`) plus that world's OWN commander.
+// `hp` is the number of hits for ONE ship; the co-op factor below scales it with
+// the number of seats, so a 4-player match fights a 4x tougher boss.
+// Enemy letters: b basic, z zigzag, s sniper, a armored, m bomber, g grunt.
+// Hazards: 0 none, 1 drift, 2 storm, 3 comets, 4 gravity, 5 splitter, 6 magnet.
+const FORM_MAP = { b: 'basic', z: 'zigzag', s: 'sniper', a: 'armored', m: 'bomber', g: 'grunt' };
+const ENEMY = {
+  basic: { hp: 1, pts: 100 }, zigzag: { hp: 1, pts: 120 }, sniper: { hp: 1, pts: 150 },
+  armored: { hp: 3, pts: 250 }, bomber: { hp: 2, pts: 200 }, grunt: { hp: 4, pts: 300 },
+  drone: { hp: 1, pts: 60 },
+};
 
-const CHAPTERS = [
-  ['Sinal desconhecido', 'As colônias ficar em silence. You are the last ship sent to investigate.'],
-  ['O cerco', 'The first fleet fell, but its records point to a larger intelligence.'],
-  ['O enxame', 'The enemy ships learn your movements. The signal comes from the heart of the fleet.'],
-  ['A origem', 'The mother-fleet controls the invasion. Destroy the core and free the colonies.'],
+const WORLDS = [
+  { name: 'Kolonia Nova', card: 'Sinal desconhecido', story: 'As colônias ficar em silence. You are the last ship sent to investigate.', form: 'grid', rows: 3, cols: 7, t: 'bbb', haz: 0, boss: { name: 'Sentinela Ômega', w: 110, h: 50, vx: 95, body: '#3f6fd0', trim: '#7fd4ff', kind: 0, hp: 60 } },
+  { name: 'Belt Aster', card: 'O cerco', story: 'Asteroid traffic. The escort learned your approach vector.', form: 'wedge', rows: 3, cols: 7, t: 'bzb', haz: 0, boss: { name: 'Corvadera Vex', w: 120, h: 46, vx: 110, body: '#a8462f', trim: '#ff9a5a', kind: 1, hp: 74 } },
+  { name: 'Crater Mars', card: 'O enxame', story: 'Rust winds carry a drone swarm. They drift on the spot.', form: 'grid', rows: 4, cols: 7, t: 'zbbz', haz: 1, boss: { name: 'Matriarca do Enxame', w: 150, h: 44, vx: 78, body: '#8b3fa8', trim: '#f093fb', kind: 2, hp: 88 } },
+  { name: 'Orbital Venus', card: 'Lanterns', story: 'Columned sentries sweep the cloud deck. Snipers sit on top.', form: 'columns', rows: 5, cols: 7, t: 'zszbs', haz: 0, boss: { name: 'Drona Bastion', w: 130, h: 58, vx: 92, body: '#2f8f6f', trim: '#7ff0c0', kind: 4, hp: 100 } },
+  { name: 'Ring Saturn', card: 'Storm front', story: 'The rings throw lightning. Aim for the gaps.', form: 'ring', rows: 4, cols: 8, t: 'sbbz', haz: 2, boss: { name: 'Kraken da Orbita', w: 160, h: 52, vx: 85, body: '#5f3f9f', trim: '#c9a2ff', kind: 2, hp: 112 } },
+  { name: 'Ice Europa', card: 'Glacier', story: 'Frozen lattice. The floor is closing in.', form: 'stagger', rows: 5, cols: 7, t: 'zazbz', haz: 0, boss: { name: 'Glacial Warden', w: 140, h: 62, vx: 70, body: '#3f9fd0', trim: '#bff0ff', kind: 5, hp: 124 } },
+  { name: 'Storm Jupiter', card: 'Tempest', story: 'A wall of rain. Nothing here is quiet.', form: 'grid', rows: 4, cols: 7, t: 'szzs', haz: 2, boss: { name: 'Tempest Node', w: 120, h: 66, vx: 105, body: '#c9a227', trim: '#ffcc00', kind: 7, hp: 136 } },
+  { name: 'Canyon Io', card: 'Split', story: 'Every wreck you kill spawns two more. Clear the canyon fast.', form: 'twin', rows: 4, cols: 7, t: 'zaaz', haz: 5, boss: { name: 'Splitter Prime', w: 150, h: 56, vx: 96, body: '#d05f3f', trim: '#ffb0a0', kind: 6, hp: 148 } },
+  { name: 'Nebula Zeta', card: 'Spiral', story: 'Dense fog. The commander spins its barrels.', form: 'arrow', rows: 5, cols: 7, t: 'bzszb', haz: 1, boss: { name: 'Spiral Oracle', w: 136, h: 60, vx: 88, body: '#7f3fbf', trim: '#e0b0ff', kind: 3, hp: 160 } },
+  { name: 'Wraith Belt', card: 'Wraiths', story: 'Comets fall from the belt. Keep moving.', form: 'cross', rows: 6, cols: 7, t: 'bbbbbb', haz: 3, boss: { name: 'Wraith Sovereign', w: 144, h: 64, vx: 100, body: '#2f5f7f', trim: '#9fd8ff', kind: 4, hp: 172 } },
+  { name: 'Forge Vulcan', card: 'Forge', story: 'Heavy plates under gravity. Armored rows lead.', form: 'wall', rows: 5, cols: 7, t: 'aggga', haz: 4, boss: { name: 'Forge Colossus', w: 170, h: 70, vx: 66, body: '#8f5f2f', trim: '#ffd8a0', kind: 0, hp: 184 } },
+  { name: 'Void Xeno', card: 'Void', story: 'No stars. Bombers open in three lanes.', form: 'cluster', rows: 5, cols: 7, t: 'smzma', haz: 2, boss: { name: 'Void Harvester', w: 150, h: 68, vx: 112, body: '#4f2f5f', trim: '#d090ff', kind: 5, hp: 196 } },
+  { name: 'Comet Trail', card: 'Comets', story: 'A rain of ice. The lance answers every shot.', form: 'snake', rows: 5, cols: 7, t: 'bzszb', haz: 3, boss: { name: 'Comet Lancer', w: 132, h: 62, vx: 118, body: '#2f7f9f', trim: '#a0f0ff', kind: 1, hp: 208 } },
+  { name: 'Abyss Theta', card: 'Magnetism', story: 'Your own shots bend. Lead the target.', form: 'hourglass', rows: 5, cols: 7, t: 'gagag', haz: 6, boss: { name: 'Abyss Warden', w: 156, h: 66, vx: 84, body: '#1f3f6f', trim: '#6fa0ff', kind: 7, hp: 220 } },
+  { name: 'Gate Omega', card: 'The gate', story: 'A lattice of snipers. They already know where you will be.', form: 'lattice', rows: 6, cols: 7, t: 'sasasa', haz: 2, boss: { name: 'Omega Gatekeeper', w: 164, h: 72, vx: 104, body: '#9f2f5f', trim: '#ff9fd0', kind: 6, hp: 240 } },
+  { name: 'Core Prime', card: 'The core', story: 'The mother-fleet core. Everything you learned, it learned too.', form: 'fortress', rows: 6, cols: 7, t: 'gagags', haz: 4, boss: { name: 'Prime Core', w: 180, h: 76, vx: 90, body: '#c9a227', trim: '#fff0a0', kind: 3, hp: 260 } },
 ];
 
 // One color per seat — four ships on one screen must be tellable apart.
@@ -66,10 +90,15 @@ function create(mode, seed) {
     enemies: [], boss: null, bullets: [], enemyBullets: [], powerUps: [], particles: [],
     enemyTimer: 0, enemyDir: 1, fireTimer: 0, bossTimer: 0,
     warning: 0, warningX: 0, flash: 0, laser: 0, laserX: 0,
+    hazTimer: 0, storm: 0, stormX: 0, stage: 'fleet',
     story: null, storyTimer: 0,
     createdAt: seed != null ? 0 : Date.now(), lastActivity: seed != null ? 0 : Date.now(),
   };
   if (seed != null) { w.rngState = (seed >>> 0) || 1; w.seed0 = seed; } // deterministic client-side sim (state lives in the world)
+  // A fresh world must already have a fleet: server.js does create -> addPlayer
+  // -> status='live' and never calls initLevel, so without this the first world
+  // has zero enemies and nextLevel() advances it on the very first tick.
+  initLevel(w);
   return w;
 }
 
@@ -103,28 +132,73 @@ function applyInput(w, seat, mx, my, fire) {
 }
 
 // ---------------------------------------------------------------- level setup
-function initLevel(w) {
-  w.enemies = []; w.boss = null; w.bullets = []; w.enemyBullets = []; w.powerUps = [];
-  w.enemyTimer = 0; w.enemyDir = 1; w.fireTimer = 0; w.bossTimer = 0;
-  w.warning = 0; w.laser = 0; w.flash = 0;
-  if (w.level % 5 === 0) {
-    const tier = Math.floor(w.level / 5) - 1;
-    const d = BOSS_DEFS[Math.min(tier, BOSS_DEFS.length - 1)];
-    const hp = Math.round((20 + tier * 14) * MODES[w.mode].hp);
-    w.boss = { name: d.name, x: W / 2 - d.w / 2, y: 48, baseY: 48, w: d.w, h: d.h,
-      hp, maxHp: hp, vx: d.vx, phase: 0, t: 0, kind: d.kind };
-  } else {
-    const rows = Math.min(3 + Math.floor((w.level - 1) / 2), 6), cols = 7;
-    for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
-      const type = w.level >= 3 && row === 0 ? 'sniper'
-        : w.level >= 2 && row === 1 ? 'zigzag'
-        : w.level >= 4 && row === rows - 1 ? 'armored' : 'basic';
+// A WORLD = a fleet phase and then that world's commander. `w.stage` says which
+// half of the world is running, so the client renderer needs no extra state.
+const FORMS = {
+  grid: (r, c, rows, cols) => true,
+  wedge: (r, c, rows, cols) => Math.abs(c - (cols - 1) / 2) <= (r + 1) * (cols / (rows * 2)) + 0.5,
+  stagger: (r, c) => !(r % 2 === 1 && c % 2 === 0),
+  columns: (r, c, rows, cols) => c % 2 === 0 || r < 2,
+  ring: (r, c, rows, cols) => r === 0 || r === rows - 1 || c <= 1 || c >= cols - 2,
+  twin: (r, c, rows, cols) => c < 3 || c >= cols - 3,
+  arrow: (r, c, rows, cols) => Math.abs(c - (cols - 1) / 2) <= r + 0.5,
+  cross: (r, c, rows, cols) => r === ((rows - 1) >> 1) || c === ((cols - 1) >> 1) || (r + c) % 3 === 0,
+  wall: (r, c) => true,
+  cluster: (r, c) => (r + c) % 2 === 0 || r === 0,
+  snake: (r, c) => (c + (r >> 1)) % 2 === 0 || r === 0,
+  hourglass: (r, c, rows, cols) => Math.abs(c - (cols - 1) / 2) <= (cols - 1) / 2 - Math.abs(r - (rows - 1) / 2),
+  lattice: (r, c, rows, cols) => (r + c) % 2 === 0 || r === 0 || r === rows - 1,
+  fortress: (r, c, rows, cols) => r === 1 || r === rows - 2 || c % 3 === 0,
+};
+
+function worldDef(w) { return WORLDS[Math.min(w.level - 1, WORLDS.length - 1)]; }
+
+function spawnFleet(w) {
+  const wd = worldDef(w);
+  const rows = wd.rows, cols = wd.cols;
+  const keep = FORMS[wd.form];
+  const tough = Math.floor((w.level - 1) / 4); // deeper worlds wear more plating
+  const stepX = Math.min(58, (W - 60) / (cols - 1));
+  const x0 = (W - stepX * (cols - 1) - 34) / 2;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (!keep(row, col, rows, cols)) continue;
+      const type = FORM_MAP[wd.t[Math.min(row, wd.t.length - 1)]] || 'basic';
+      const st = ENEMY[type];
       w.enemies.push({
-        x: 50 + col * 58, y: 55 + row * 43, baseX: 50 + col * 58,
-        w: 34, h: 25, type, hp: type === 'armored' ? 2 : 1, t: rnd(0, 6),
+        x: x0 + col * stepX, y: 52 + row * 42, baseX: x0 + col * stepX,
+        w: 34, h: 25, type, hp: st.hp + (type === 'basic' || type === 'zigzag' ? tough : tough * 2),
+        t: rnd(0, 6), pts: st.pts,
       });
     }
   }
+}
+
+function spawnBoss(w) {
+  const d = worldDef(w).boss;
+  const seats = Math.max(1, w.players.length);
+  // Co-op scaling: a 4-seat match fights a ~2.6x tougher commander than a solo
+  // run, so the difficulty the user asked for actually lands in multiplayer.
+  const coops = 1 + (seats - 1) * 0.55;
+  const hp = Math.round(d.hp * MODES[w.mode].hp * coops);
+  w.boss = {
+    name: d.name, x: W / 2 - d.w / 2, y: 48, baseY: 48, w: d.w, h: d.h,
+    hp, maxHp: hp, vx: d.vx * (1 + (w.level - 1) * 0.03), phase: 0, t: 0, kind: d.kind,
+    escort: 0,
+  };
+  w.bossTimer = 0;
+}
+
+function initLevel(w) {
+  // spawnFleet() draws from rnd(), so rnd() must advance THIS world's rngState —
+  // otherwise create()/restart() would read Math.random() (or worse, a stale
+  // world's state) and the seeded sim would stop being deterministic.
+  CURW = w;
+  w.enemies = []; w.boss = null; w.bullets = []; w.enemyBullets = []; w.powerUps = [];
+  w.enemyTimer = 0; w.enemyDir = 1; w.fireTimer = 0; w.bossTimer = 0;
+  w.warning = 0; w.laser = 0; w.flash = 0; w.hazTimer = 0; w.storm = 0; w.stormX = 0;
+  w.stage = 'fleet';
+  spawnFleet(w);
 }
 
 // ---------------------------------------------------------------- events
@@ -171,23 +245,20 @@ function shoot(w, p) {
   p.shot = p.timers.rapidfire > 0 ? 90 : 170;
 }
 
+// A world is two beats: clear its fleet, then kill its commander. `w.stage`
+// carries which beat is live, so advancing a world means going back to 'fleet'.
 function nextLevel(w) {
-  const wasBoss = w.level % 5 === 0;
-  if (w.level === 15 && wasBoss) {
+  if (w.stage === 'fleet') { w.stage = 'boss'; spawnBoss(w); w.storyTimer = 0; return; }
+  if (w.level >= WORLDS.length) {
     w.status = 'over';
-    w.story = { title: 'Victória: sinal restaurado', text: 'The core was destroyed. The colonies answer again.' };
+    w.story = { title: 'Victória: tour complete', text: 'Every world on the tour is clear. The colonies answer again.' };
     return;
   }
+  for (const p of w.players) if (p.alive) p.lives = Math.min(MODES[w.mode].lives, p.lives + 1);
   w.level++;
-  if (wasBoss) {
-    for (const p of w.players) if (p.alive) p.lives = Math.min(MODES[w.mode].lives, p.lives + 1);
-    const ch = CHAPTERS[Math.min(Math.floor((w.level - 1) / 5), CHAPTERS.length - 1)];
-    w.story = { title: ch[0], text: ch[1] + ' You recovered a life.' };
-  } else if (w.level % 5 === 0) {
-    const d = BOSS_DEFS[Math.min(Math.floor(w.level / 5) - 1, BOSS_DEFS.length - 1)];
-    w.story = { title: 'ALERTA: ' + d.name, text: 'Enemy transmission located. Dodge the telegraphed attacks and destroy the commander.' };
-  } else w.story = null;
-  w.storyTimer = w.story ? 2600 : 0;
+  const wd = worldDef(w);
+  w.story = { title: wd.card, text: wd.story + ' You recovered a life.' };
+  w.storyTimer = 2600;
   initLevel(w);
 }
 
@@ -200,12 +271,81 @@ function damage(w, p) {
   else { p.alive = false; p.respawn = 2500; }                  // back after 2.5 s
 }
 
+// ---------------------------------------------------------------- boss AI
+// Eight commanders, each with its own signature. `deep` (0..15) is the world
+// index, so the same kind is meaner on a later world. Every pattern leaves the
+// player a gap: nothing here is un-dodgeable, it is just tighter.
+function bossAct(w, b, mode, deep) {
+  const tgt = w.players.filter((p) => p.alive && !p.offline);
+  const aim = () => {
+    if (!tgt.length) return null;
+    const p = tgt[Math.floor(rnd(0, tgt.length))];
+    return { x: p.x + p.w / 2, y: p.y };
+  };
+  const spd = (200 + deep * 14) * mode.bullet;
+  const rage = 1 + (1 - b.hp / b.maxHp) * 0.8;
+  const cx = b.x + b.w / 2, cy = b.y + b.h;
+
+  // Commanders keep a escort of drones alive; the player has to clear them or
+  // they crowd the screen. Bounded so the fight can never stall.
+  const escorts = w.enemies.filter((e) => e.type === 'drone').length;
+  if (escorts < 2 + Math.floor(deep / 5)) {
+    w.enemies.push({
+      x: clamp(cx + rnd(-b.w, b.w), 6, W - 40), y: b.y + b.h, baseX: 0,
+      w: 26, h: 20, type: 'drone', hp: 1 + Math.floor(deep / 6), t: rnd(0, 6), pts: 60,
+    });
+  }
+
+  switch (b.kind) {
+    case 0: { // fan + aimed sniper pair
+      const n = 3 + Math.floor(deep / 4);
+      for (let i = -Math.floor(n / 2); i <= Math.floor(n / 2); i++)
+        bullet(w, true, cx, cy, i * (58 + deep), spd);
+      const a = aim();
+      if (a) { const dx = a.x - cx, dy = a.y - b.y, len = Math.hypot(dx, dy) || 1; bullet(w, true, cx, b.y + b.h, dx / len * spd * 1.3, dy / len * spd * 1.3); }
+      break; }
+    case 1: { // twin rain + horizontal sweep
+      for (const sx of [b.x + 14, b.x + b.w - 14]) for (let i = -1; i <= 1; i++)
+        bullet(w, true, sx + i * 12, cy, i * 26, spd * 1.05);
+      if (b.phase % 2 === 0) for (let i = 0; i < 4 + Math.floor(deep / 4); i++)
+        bullet(w, true, b.x + b.w / 2, cy, (i % 2 ? 1 : -1) * (120 + i * 12), spd * 0.7);
+      break; }
+    case 2: { // telegraphed laser wall + 8-way burst
+      if (b.phase % 2 === 0) { w.warningX = clamp((aim() || { x: W / 2 }).x, 25, W - 25); w.warning = 700; }
+      else for (let a = 0; a < 10; a++) { const ang = a * Math.PI / 5 + b.t; bullet(w, true, cx, b.y + b.h / 2, Math.cos(ang) * (150 + deep * 6), Math.sin(ang) * (130 + deep * 5)); }
+      break; }
+    case 3: { // rotating spiral barrels
+      const arms = 3 + Math.floor(deep / 5);
+      for (let k = 0; k < arms; k++) { const ang = b.t * 2 + k * (Math.PI * 2 / arms); bullet(w, true, cx, b.y + b.h / 2, Math.cos(ang) * (170 + deep * 5), Math.abs(Math.sin(ang)) * spd + 60); }
+      if (b.phase % 3 === 0) { w.warningX = clamp(rnd(40, W - 40), 25, W - 25); w.warning = 620; }
+      break; }
+    case 4: { // bastion: three gates, only one opens
+      if (b.phase % 3 === 0) { w.warningX = clamp((aim() || { x: W / 2 }).x, 25, W - 25); w.warning = 780; }
+      else { const gap = Math.floor(rnd(0, 3)); for (let i = 0; i < 3; i++) if (i !== gap) bullet(w, true, b.x + 20 + i * (b.w - 40) / 2, cy, (i - 1) * 40, spd * 1.1); }
+      break; }
+    case 5: { // harvester: magnet rain + side vents
+      for (let i = 0; i < 3 + Math.floor(deep / 5); i++) bullet(w, true, clamp(cx + (i - 1) * 46, 10, W - 10), cy, rnd(-30, 30), spd);
+      if (b.phase % 2 === 0) { w.warningX = clamp((aim() || { x: W / 2 }).x, 25, W - 25); w.warning = 700; }
+      break; }
+    case 6: { // gatekeeper: crossfire + aimed volley
+      for (let i = 0; i < 5 + Math.floor(deep / 3); i++) bullet(w, true, b.x + (i + 0.5) * b.w / (5 + Math.floor(deep / 3)), cy, (i % 2 ? 55 : -55), spd * 1.15);
+      const a = aim();
+      if (a) for (let k = 0; k < 3; k++) { const dx = a.x - cx + (k - 1) * 30, dy = a.y - b.y, len = Math.hypot(dx, dy) || 1; bullet(w, true, cx, b.y + b.h, dx / len * spd * 1.25, dy / len * spd * 1.25); }
+      break; }
+    default: { // kind 7 — oracle: everything, escalating
+      if (b.phase % 4 === 0) { w.warningX = clamp((aim() || { x: W / 2 }).x, 25, W - 25); w.warning = 640; }
+      else if (b.phase % 4 === 1) for (let a = 0; a < 12; a++) { const ang = a * Math.PI / 6 + b.t * 1.5; bullet(w, true, cx, b.y + b.h / 2, Math.cos(ang) * (160 + deep * 5), Math.sin(ang) * (140 + deep * 4)); }
+      else if (b.phase % 4 === 2) for (let i = -2; i <= 2; i++) bullet(w, true, cx, cy, i * (70 + deep * 2), spd * 1.1);
+      else { const a = aim(); if (a) for (let k = 0; k < 4; k++) { const dx = a.x - cx + (k - 1.5) * 26, dy = a.y - b.y, len = Math.hypot(dx, dy) || 1; bullet(w, true, cx, b.y + b.h, dx / len * spd * 1.2, dy / len * spd * 1.2); } }
+    }
+  }
+}
+
 // ---------------------------------------------------------------- step
 function step(w, ms) {
   if (w.status !== 'live') return;
   CURW = w; // rnd() advances THIS world's rngState (rollback-safe)
   const dt = ms / 1000;
-  const tier = Math.floor((w.level - 1) / 5);
   const mode = MODES[w.mode];
   const now = w.rngState != null ? w.tick : Date.now(); // tick clock when deterministic
 
@@ -239,16 +379,41 @@ function step(w, ms) {
 
   for (const e of w.enemies) if (e.type === 'zigzag') { e.t += dt * 3; e.x = clamp(e.baseX + Math.sin(e.t) * 19, 0, W - e.w); }
 
+  const wd = worldDef(w);
+  const deep = w.level - 1; // 0..15 — the tour's difficulty ramp
+
+  // ---- world hazard -------------------------------------------------------
+  // Each world carries one hazard so the fleet phase is not seven identical
+  // screens. 0 none, 1 drift, 2 storm, 3 comets, 4 gravity, 5 splitter, 6 magnet.
+  if (w.stage === 'fleet' && wd.haz) {
+    w.hazTimer += ms;
+    if (wd.haz === 2 && w.storm > 0) {           // storm: telegraphed bolt column
+      w.storm -= ms;
+      if (w.storm <= 0) { w.laser = 300; w.laserX = w.stormX; }
+    } else if (wd.haz === 2 && w.hazTimer >= 2600) {
+      w.hazTimer = 0; w.storm = 700; w.stormX = rnd(40, W - 40);
+    } else if (wd.haz === 3 && w.hazTimer >= 1500) {   // comets: falling ice
+      w.hazTimer = 0;
+      const cx = rnd(30, W - 30);
+      bullet(w, true, cx, 20, rnd(-40, 40), 250 + deep * 8, 8, 14);
+    } else if (wd.haz === 4 && w.hazTimer >= 2000) {   // gravity: fleet lurches down
+      w.hazTimer = 0;
+      for (const e of w.enemies) e.y += 6;
+      w.flash = 60;
+    }
+  }
+
   w.enemyTimer += ms;
-  const moveInterval = Math.max(150, 480 - w.level * 22);
+  const moveInterval = Math.max(140, 470 - deep * 20);
   if (w.enemyTimer >= moveInterval && w.enemies.length) {
     w.enemyTimer %= moveInterval;
     const edge = w.enemies.some((e) => e.baseX < 12 || e.baseX + e.w > W - 12);
     if (edge) w.enemyDir *= -1;
     let reached = false;
     for (const e of w.enemies) {
-      e.baseX += w.enemyDir * (7 + tier * 2);
-      if (edge) e.y += 12;
+      e.baseX += w.enemyDir * (7 + deep);
+      if (edge) e.y += 10 + Math.floor(deep / 3);
+      if (wd.haz === 1) e.baseX += Math.sin(e.t) * 0.6;   // drift
       if (e.type !== 'zigzag') e.x = e.baseX;
       for (const p of w.players) if (p.alive && hit(e, p)) damage(w, p);
       if (e.y + e.h >= H) reached = true;
@@ -266,38 +431,38 @@ function step(w, ms) {
     b.t += dt;
     b.x += b.vx * dt;
     if (b.x <= 8 || b.x + b.w >= W - 8) { b.x = clamp(b.x, 8, W - 8 - b.w); b.vx *= -1; }
-    if (b.kind === 1) b.y = b.baseY + Math.sin(b.t * 1.6) * 30;
-    if (b.kind === 2) b.y = b.baseY + Math.sin(b.t * 0.9) * 46;
+    // Commanders of the later worlds dive further into the playfield.
+    const sway = [0, 30, 46, 34, 26, 40, 22, 52][b.kind % 8];
+    if (sway) b.y = b.baseY + Math.sin(b.t * (0.8 + deep * 0.05)) * sway;
     w.bossTimer += ms;
+
+    // A telegraphed column always resolves, whatever the boss is doing.
     if (w.warning > 0) {
       w.warning -= ms;
       if (w.warning <= 0) {
-        if (b.kind === 2) { w.laser = 380; w.laserX = w.warningX; }
-        else for (let i = -1; i <= 1; i++) bullet(w, true, w.warningX + i * 11, b.y + b.h, i * 35, 240 * mode.bullet);
+        if (b.kind === 2 || b.kind === 5) { w.laser = 380; w.laserX = w.warningX; }
+        else for (let i = -1; i <= 1; i++) bullet(w, true, w.warningX + i * 11, b.y + b.h, i * 35, (240 + deep * 6) * mode.bullet);
       }
     }
-    const cadence = Math.max(600, (1700 - tier * 150) * mode.fire);
+
+    // Phase-gated cadence: a commander gets faster AND angrier as it loses hull.
+    const rage = 1 + (1 - b.hp / b.maxHp) * 0.8;
+    const cadence = Math.max(320, (1500 - deep * 55) * mode.fire / rage);
     if (w.bossTimer >= cadence) {
       w.bossTimer = 0; b.phase++;
-      if (b.phase % 3 === 0) {
-        const target = w.players.filter((p) => p.alive && !p.offline);
-        w.warningX = clamp((target.length ? target[Math.floor(rnd(0, target.length))].x : W / 2) + 20, 25, W - 25);
-        w.warning = b.kind === 2 ? 850 : 650;
-      }
-      else if (b.kind === 0) for (let i = -2; i <= 2; i++) bullet(w, true, b.x + b.w / 2, b.y + b.h, i * 75, (205 + tier * 22) * mode.bullet);
-      else if (b.kind === 1) for (const sx of [b.x + 14, b.x + b.w - 14]) for (let i = -1; i <= 1; i++) bullet(w, true, sx + i * 12, b.y + b.h, 0, (210 + tier * 20) * mode.bullet);
-      else for (let a = 0; a < 8; a++) { const ang = a * Math.PI / 4; bullet(w, true, b.x + b.w / 2, b.y + b.h / 2, Math.cos(ang) * 160, Math.sin(ang) * 140); }
+      bossAct(w, b, mode, deep);
     }
     if (w.laser > 0) for (const p of w.players) if (p.alive && Math.abs((p.x + p.w / 2) - w.laserX) < 24) damage(w, p);
   }
   else if (w.enemies.length) {
     w.fireTimer += ms;
-    const cadence = Math.max(230, (780 - w.level * 36) * mode.fire);
+    // Deeper worlds fire far more often — the fleet phase is the pressure valve.
+    const cadence = Math.max(190, (760 - deep * 38) * mode.fire);
     if (w.fireTimer >= cadence) {
       w.fireTimer = 0;
       const e = w.enemies[Math.floor(rnd(0, w.enemies.length))];
       if (e) {
-        const speed = (220 + tier * 20) * mode.bullet;
+        const speed = (215 + deep * 16) * mode.bullet;
         if (e.type === 'sniper') {
           const target = w.players.filter((p) => p.alive && !p.offline);
           if (target.length) {
@@ -306,13 +471,36 @@ function step(w, ms) {
             const len = Math.hypot(dx, dy) || 1;
             bullet(w, true, e.x + e.w / 2, e.y + e.h, dx / len * speed, dy / len * speed);
           }
-        } else if (e.type === 'armored') for (const vx of [-65, 65]) bullet(w, true, e.x + e.w / 2, e.y + e.h, vx, speed);
-        else bullet(w, true, e.x + e.w / 2, e.y + e.h, 0, speed);
+        } else if (e.type === 'armored' || e.type === 'grunt')
+          for (const vx of [-70, 0, 70]) bullet(w, true, e.x + e.w / 2, e.y + e.h, vx, speed);
+        else if (e.type === 'bomber') {
+          for (const vx of [-65, 65]) bullet(w, true, e.x + e.w / 2, e.y + e.h, vx, speed);
+          bullet(w, true, e.x + e.w / 2, e.y + e.h, 0, speed * 1.2);
+        } else if (e.type === 'drone') {
+          const target = w.players.filter((p) => p.alive && !p.offline);
+          if (target.length) {
+            const p = target[Math.floor(rnd(0, target.length))];
+            const dx = (p.x + p.w / 2) - (e.x + e.w / 2), dy = p.y - e.y;
+            const len = Math.hypot(dx, dy) || 1;
+            bullet(w, true, e.x + e.w / 2, e.y + e.h, dx / len * speed, dy / len * speed);
+          }
+        } else bullet(w, true, e.x + e.w / 2, e.y + e.h, 0, speed);
       }
     }
   }
 
   for (const b of w.bullets) {
+    if (wd.haz === 6) { // magnetism: your own shots bend toward the nearest target
+      let best = null, bestD = 1e9;
+      for (const e of w.enemies) { const d = Math.hypot(e.x - b.x, e.y - b.y); if (d < bestD) { bestD = d; best = e; } }
+      if (w.boss) { const d = Math.hypot(w.boss.x + w.boss.w / 2 - b.x, w.boss.y - b.y); if (d < bestD) best = w.boss; }
+      if (best) {
+        const dx = (best.x + best.w / 2) - b.x, dy = (best.y + best.h / 2) - b.y, len = Math.hypot(dx, dy) || 1;
+        const v = Math.hypot(b.vx, b.vy) || 470;
+        b.vx += (dx / len * v - b.vx) * 0.06;
+        b.vy += (dy / len * v - b.vy) * 0.06;
+      }
+    }
     b.x += b.vx * dt; b.y += b.vy * dt;
     if (b.y < -20) { b.active = false; continue; }
     if (w.boss && hit(b, w.boss)) {
@@ -324,8 +512,11 @@ function step(w, ms) {
       if (e.hp <= 0) {
         // credit the kill to the shooter, so the four scores stay independent
         const shooter = nearestShooter(w, e.x + e.w / 2);
-        if (shooter) shooter.score += e.type === 'armored' ? 200 : 100;
+        if (shooter) shooter.score += e.pts || 100;
         burst(w, e.x + e.w / 2, e.y + e.h / 2, '#ff3366');
+        // Splitter hazard: the wreck breaks into two drones.
+        if (wd.haz === 5 && w.enemies.length < 46)
+          for (const sx of [-16, 16]) w.enemies.push({ x: e.x + sx, y: e.y, baseX: e.x + sx, w: 22, h: 18, type: 'drone', hp: 1, t: rnd(0, 6), pts: 60 });
         drop(w, e);
       }
       break;
@@ -359,6 +550,17 @@ function step(w, ms) {
     w.status = 'over';
     w.story = { title: 'Defeat: the fleet reached Earth', text: 'Every ship is gone. The colonies stay dark.' };
   }
+  // Fixed-point positions: rounding here (not in the snapshot) keeps server and
+  // client worlds bit-identical while making the JSON payload short — raw doubles
+  // serialize as "233.00000000000006", which triples the wire size.
+  const q = (v) => Math.round(v * 100) / 100;
+  for (const p of w.players) { p.x = q(p.x); p.y = q(p.y); }
+  for (const e of w.enemies) { e.x = q(e.x); e.y = q(e.y); e.baseX = q(e.baseX); e.t = q(e.t); }
+  if (w.boss) { w.boss.x = q(w.boss.x); w.boss.y = q(w.boss.y); w.boss.vx = q(w.boss.vx); w.boss.t = q(w.boss.t); }
+  for (const b of w.bullets) { b.x = q(b.x); b.y = q(b.y); b.vx = q(b.vx); b.vy = q(b.vy); }
+  for (const b of w.enemyBullets) { b.x = q(b.x); b.y = q(b.y); b.vx = q(b.vx); b.vy = q(b.vy); }
+  for (const p of w.powerUps) { p.x = q(p.x); p.y = q(p.y); }
+  for (const p of w.particles) { p.x = q(p.x); p.y = q(p.y); p.vx = q(p.vx); p.vy = q(p.vy); p.life = q(p.life); }
   w.tick++;
 }
 
@@ -375,47 +577,99 @@ function nearestShooter(w, x) {
 
 function restart(w) {
   const names = w.players.map((p) => p.name);
-  const fresh = create(w.mode);
+  // Keep the seed: a rollback client restarts the SAME deterministic world, so
+  // its history stays valid and the server and client agree from tick 0.
+  // create() already builds world 1's fleet, so no extra initLevel here (that
+  // would draw the RNG twice and desync the client's rollback history).
+  const fresh = create(w.mode, w.seed0);
   for (const n of names) addPlayer(fresh, n);
   fresh.status = 'live';
-  initLevel(fresh);
   return fresh;
 }
 
 // ---------------------------------------------------------------- snapshot (wire)
-// Compact arrays: four phones polling 4x/s must stay far below a few KB each.
+// The snapshot must be a BIT-EXACT dump of the world, not a render hint: the
+// rollback client adopts it as its history anchor mid-match, and any lossy field
+// silently desyncs every player (each screen showing a different fleet/phase).
+// Measured offenders: dividing timers by TICK (230/50*50 = 229.99999999999997
+// shifts the whole fleet cadence) and rounding x/y/e.t (a 7 px fleet drift).
+// JSON numbers round-trip exactly, so every field here is sent raw and restore()
+// is its exact inverse.
 function snapshot(w) {
   return {
     t: w.tick,
     st: w.status,
     lv: w.level,
     md: w.mode,
+    s2: w.stage === 'boss' ? 1 : 0,
+    rs: w.rngState, // the client must resume the SAME RNG stream
+    seed: w.seed0,
     ps: w.players.map((p) => [
-      p.seat, p.name, Math.round(p.x), Math.round(p.y), p.lives, p.score,
+      p.seat, p.name, p.x, p.y, p.lives, p.score,
       p.alive ? 1 : 0, p.offline ? 1 : 0, p.color,
       (p.timers.multishot ? 'M' : '') + (p.timers.shield ? 'S' : '') + (p.timers.rapidfire ? 'R' : ''),
       p.speed,
+      // state the renderer never draws but the sim must resume exactly
+      p.invuln, p.respawn, p.shot,
+      p.timers.multishot, p.timers.shield, p.timers.rapidfire,
     ]),
-    en: w.enemies.map((e) => [Math.round(e.x), Math.round(e.y), e.type, e.hp]),
-    b: w.boss ? [w.boss.name, Math.round(w.boss.x), Math.round(w.boss.y), w.boss.w, w.boss.h,
-      Math.ceil(w.boss.hp), w.boss.maxHp, w.boss.kind] : null,
-    bl: w.bullets.map((b) => [Math.round(b.x), Math.round(b.y), b.w, b.h]),
-    eb: w.enemyBullets.map((b) => [Math.round(b.x), Math.round(b.y), b.w, b.h]),
-    pu: w.powerUps.map((p) => [Math.round(p.x), Math.round(p.y), p.type]),
-    pa: w.particles.map((p) => [Math.round(p.x), Math.round(p.y), Math.round(p.life * 100) / 100, p.color]),
-    wr: w.warning > 0 ? Math.round(w.warningX) : -1,
-    la: w.laser > 0 ? Math.round(w.laserX) : -1,
+    en: w.enemies.map((e) => [e.x, e.y, e.type, e.hp, e.baseX, e.t]),
+    b: w.boss ? [w.boss.name, w.boss.x, w.boss.y, w.boss.w, w.boss.h,
+      w.boss.hp, w.boss.maxHp, w.boss.kind, w.boss.vx, w.boss.t, w.boss.phase] : null,
+    bl: w.bullets.map((b) => [b.x, b.y, b.w, b.h, b.vx, b.vy]),
+    eb: w.enemyBullets.map((b) => [b.x, b.y, b.w, b.h, b.vx, b.vy]),
+    pu: w.powerUps.map((p) => [p.x, p.y, p.type, p.age]),
+    pa: w.particles.map((p) => [p.x, p.y, p.life, p.color, p.vx, p.vy]),
+    wx: w.warningX, ws: w.warning, // exact for the sim; the renderer reads ws > 0
+    lx: w.laserX, ls: w.laser,
     fl: w.flash,
-    story: w.storyTimer > 0 ? w.story : null,
+    hz: w.hazTimer, sw: w.storm, sx: w.stormX,
+    et: w.enemyTimer, ft: w.fireTimer, bt: w.bossTimer, ed: w.enemyDir,
+    story: w.story, stt: w.storyTimer,
     total: w.players.reduce((s, p) => s + p.score, 0),
-    createdAt: w.createdAt,
-    seed: w.seed0, // client rebuilds the SAME world from this (rollback netcode)
+    createdAt: w.createdAt, // the lobby shows how old a room is
   };
 }
 
+// ---------------------------------------------------------------- restore (wire)
+// Exact inverse of snapshot(). A client that joins mid-match MUST adopt the
+// authoritative world as-is; rebuilding from the seed and replaying from tick 0
+// gives each browser its own private fleet, which is the desync the user saw.
+function restore(s) {
+  const w = create(s.md || 'normal', s.seed);
+  w.tick = s.t; w.level = s.lv; w.status = s.st;
+  w.rngState = s.rs; w.seed0 = s.seed;
+  w.stage = s.s2 === 1 ? 'boss' : 'fleet';
+  w.enemyTimer = s.et; w.enemyDir = s.ed; w.fireTimer = s.ft; w.bossTimer = s.bt;
+  w.warning = s.ws; w.warningX = s.wx; w.flash = s.fl;
+  w.laser = s.ls; w.laserX = s.lx;
+  w.hazTimer = s.hz; w.storm = s.sw; w.stormX = s.sx;
+  w.story = s.story; w.storyTimer = s.stt;
+  w.players = s.ps.map((p) => ({
+    seat: p[0], name: p[1], x: p[2], y: p[3], w: 40, h: 20,
+    lives: p[4], score: p[5], alive: !!p[6], respawn: p[12], invuln: p[11],
+    shot: p[13], speed: p[10], offline: !!p[7],
+    timers: { multishot: p[14], shield: p[15], rapidfire: p[16] },
+    mx: 0, my: 0, fire: false,
+    lastInput: s.t, color: p[8],
+  }));
+  w.enemies = s.en.map((e) => ({ x: e[0], y: e[1], baseX: e[4], w: 34, h: 25, type: e[2], hp: e[3], t: e[5], pts: ENEMY[e[2]].pts }));
+  w.bullets = s.bl.map((b) => ({ x: b[0], y: b[1], vx: b[4], vy: b[5], w: b[2], h: b[3], active: true }));
+  w.enemyBullets = s.eb.map((b) => ({ x: b[0], y: b[1], vx: b[4], vy: b[5], w: b[2], h: b[3], active: true }));
+  w.powerUps = s.pu.map((p) => ({ x: p[0], y: p[1], w: 20, h: 20, type: p[2], age: p[3] }));
+  w.particles = s.pa.map((p) => ({ x: p[0], y: p[1], vx: p[4], vy: p[5], life: p[2], color: p[3] }));
+  if (s.b) {
+    w.boss = { name: s.b[0], x: s.b[1], y: s.b[2], baseY: s.b[2], w: s.b[3], h: s.b[4],
+               hp: s.b[5], maxHp: s.b[6], vx: s.b[8], t: s.b[9], phase: s.b[10],
+               kind: s.b[7], escort: 0 };
+  } else w.boss = null;
+  CURW = w; // any rnd() before the next step() still belongs to this world
+  return w;
+}
+
 const SiSim = {
-  create, addPlayer, applyInput, step, initLevel, snapshot, restart,
-  MODES, BOSS_DEFS, CHAPTERS, COLORS, W, H,
+  create, addPlayer, applyInput, step, initLevel, snapshot, restore, restart, spawnFleet, spawnBoss,
+  MODES, WORLDS, COLORS, ENEMY, W, H,
 };
 // CommonJS on the server; on the browser (a <script src="si-sim.js">) expose it
 // as window.SiSim so mp-client.js can run the SAME sim locally (rollback netcode).

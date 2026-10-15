@@ -370,7 +370,11 @@ Gate Omega → Core Prime — each with its own fleet shape, hazard and named co
 - **Never** reuse ids (`si*`, `ak*`, `tg*`) — MP uses `mp*`.
 - `si-sim.js` must be CommonJS-loadable (`require`) **and** browser-loadable (`window.SiSim`); no `require` at top level of browser path.
 - The MP stepper must be inside `try/catch` — a throwing step must not crash the pm2 process (that would take down `/api/ranking` too).
-- Snapshot must stay small: cap particles at 60, enemies at 42, bullets at 80; drop `baseX`/`t` from the wire format.
+- Snapshot must stay small: cap particles at 60, enemies at 42, bullets at 80. Phase 10
+  changed the shape: the wire carries **raw** values (no rounding, no unit conversion) and
+  `baseX`/`t` are back on it, because a lossy snapshot is what desynced the fleets. Size is
+  controlled by `step()` quantizing to 2 decimals instead — fleet 4.3 KB, boss 6.4 KB, guard
+  is `< 9000` in `test-mp.js`.
 - `Cache-Control: no-store` on state responses — nginx/Pages caching would freeze the match.
 - Single-player SI stays byte-identical; the MP sim is separate. If they ever drift, that is a deliberate fork, not a shared refactor.
 - Room codes are unauthenticated by design (public lobby). Cap creates/IP and cap open rooms so the box can't be flooded.
